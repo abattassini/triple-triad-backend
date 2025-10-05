@@ -115,7 +115,7 @@ namespace TripleTriadApi.Controllers
         public async Task<ActionResult<object>> GetMatch(int matchId)
         {
             var match = await _gameRepository.GetMatchByIdAsync(matchId);
-            if (match == null)
+            if (match is null)
             {
                 return NotFound(new { error = "Match not found" });
             }
@@ -168,18 +168,18 @@ namespace TripleTriadApi.Controllers
         {
             var hand = await _gameRepository.GetPlayerHandAsync(matchId, playerId);
             var cards = hand.Select(ph => new
-                {
-                    ph.Card.Id,
-                    ph.Card.Name,
-                    ph.Card.Image,
-                    ph.Card.TopValue,
-                    ph.Card.RightValue,
-                    ph.Card.BottomValue,
-                    ph.Card.LeftValue,
-                    ph.Card.Element,
-                    ph.Card.Level,
-                    isUsed = ph.IsUsed,
-                })
+            {
+                ph.Card.Id,
+                ph.Card.Name,
+                ph.Card.Image,
+                ph.Card.TopValue,
+                ph.Card.RightValue,
+                ph.Card.BottomValue,
+                ph.Card.LeftValue,
+                ph.Card.Element,
+                ph.Card.Level,
+                isUsed = ph.IsUsed,
+            })
                 .ToList();
             return Ok(cards);
         }
@@ -247,7 +247,7 @@ namespace TripleTriadApi.Controllers
             try
             {
                 var match = await _gameRepository.GetMatchByIdAsync(matchId);
-                if (match == null)
+                if (match is null)
                 {
                     return NotFound(new { error = "Match not found" });
                 }

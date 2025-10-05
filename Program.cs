@@ -36,6 +36,9 @@ builder.Services.AddScoped<CardSeederService>();
 builder.Services.AddSignalR();
 
 // Add CORS
+var allowedOrigins = builder.Configuration.GetSection("AllowedOrigins").Get<string[]>()
+    ?? new[] { "http://localhost:5173", "https://abattassini.github.io" };
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy(
@@ -43,7 +46,7 @@ builder.Services.AddCors(options =>
         policy =>
         {
             policy
-                .WithOrigins("http://localhost:5173", "https://argentinaluiz.github.io")
+                .WithOrigins(allowedOrigins)
                 .AllowAnyMethod()
                 .AllowAnyHeader()
                 .AllowCredentials();
@@ -70,19 +73,15 @@ var app = builder.Build();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
-}
-
-// Don't redirect to HTTPS in development to avoid certificate issues
-// app.UseHttpsRedirection();
-
-// Use CORS - Use permissive policy in development
-if (app.Environment.IsDevelopment())
-{
     app.UseCors("AllowAll");
 }
 else
 {
+    // Production: use configured origins only
     app.UseCors("AllowFrontend");
+
+    // Enable HTTPS redirection in production
+    app.UseHttpsRedirection();
 }
 
 app.UseAuthorization();
@@ -96,7 +95,27 @@ app.MapHub<GameHub>("/gamehub");
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<TripleTriadContext>();
+
+    // Apply migrations only if using a real database (not in-memory)
+    if (!context.Database.IsInMemory())
+    {
+        try
+        {
+            await context.Database.MigrateAsync();
+        }
+        catch (Exception ex)
+        {
+            var migrationLogger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+            migrationLogger.LogError(ex, "An error occurred while migrating the database.");
+        }
+    }
+
     await CardSeederService.SeedCardsAsync(context);
 }
+
+// Log startup information
+var logger = app.Services.GetRequiredService<ILogger<Program>>();
+logger.LogInformation("Triple Triad API starting...");
+logger.LogInformation("Environment: {Environment}", app.Environment.EnvironmentName);
 
 app.Run();

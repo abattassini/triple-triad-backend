@@ -149,7 +149,7 @@ namespace TripleTriadApi.Services
 
             // Mark card as used in player's hand
             var usedCard = playerHand.FirstOrDefault(ph => ph.CardId == cardId && !ph.IsUsed);
-            if (usedCard != null)
+            if (usedCard is not null)
             {
                 usedCard.IsUsed = true;
                 await _gameRepository.UpdatePlayerHandAsync(usedCard);

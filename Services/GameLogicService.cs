@@ -252,7 +252,7 @@ namespace TripleTriadApi.Services
                     allPlacements
                 );
 
-                if (capturedCard != null)
+                if (capturedCard is not null)
                 {
                     captures.Add(capturedCard);
                 }
@@ -332,7 +332,7 @@ namespace TripleTriadApi.Services
                 p.X == neighborX && p.Y == neighborY && p.Owner != playerId
             );
 
-            if (neighborPlacement?.Card == null)
+            if (neighborPlacement?.Card is null)
             {
                 return null;
             }

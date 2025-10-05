@@ -21,7 +21,7 @@ namespace TripleTriadApi.Hubs
             await Groups.AddToGroupAsync(Context.ConnectionId, $"match-{matchId}");
 
             var match = await _gameRepository.GetMatchByIdAsync(matchId);
-            if (match != null)
+            if (match is not null)
             {
                 await Clients
                     .Group($"match-{matchId}")
@@ -108,7 +108,7 @@ namespace TripleTriadApi.Hubs
         public async Task RequestMatchStatus(int matchId)
         {
             var match = await _gameRepository.GetMatchByIdAsync(matchId);
-            if (match != null)
+            if (match is not null)
             {
                 var placements = await _gameRepository.GetCardPlacementsAsync(matchId);
 

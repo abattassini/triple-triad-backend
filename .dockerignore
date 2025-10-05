@@ -1,0 +1,15 @@
+**/.git
+**/.gitignore
+**/.vs
+**/.vscode
+**/bin
+**/obj
+**/.editorconfig
+**/.csharpierrc.json
+**/.csharpierignore
+**/node_modules
+**/http-requests
+**/*.md
+**/.env
+**/.env.*
+!**/.env.example
