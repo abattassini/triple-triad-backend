@@ -17,11 +17,12 @@ WORKDIR /app
 # Copy published app
 COPY --from=build /app/publish .
 
-# Expose port (Koyeb will set PORT environment variable)
+# Expose port (Koyeb uses port 8000 internally)
 EXPOSE 8000
 
 # Set environment to Production
 ENV ASPNETCORE_ENVIRONMENT=Production
-ENV ASPNETCORE_URLS=http://+:8000
 
+# Koyeb expects the app to listen on port 8000
+# The ASPNETCORE_URLS is already set correctly above
 ENTRYPOINT ["dotnet", "TripleTriadApi.dll"]

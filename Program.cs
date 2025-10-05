@@ -73,15 +73,16 @@ var app = builder.Build();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+}
+
+// CORS must come before routing
+if (app.Environment.IsDevelopment())
+{
     app.UseCors("AllowAll");
 }
 else
 {
-    // Production: use configured origins only
     app.UseCors("AllowFrontend");
-
-    // Enable HTTPS redirection in production
-    app.UseHttpsRedirection();
 }
 
 app.UseAuthorization();
