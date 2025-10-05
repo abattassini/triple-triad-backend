@@ -23,6 +23,7 @@ EXPOSE 8000
 # Set environment to Production
 ENV ASPNETCORE_ENVIRONMENT=Production
 
-# Koyeb expects the app to listen on port 8000
-# The ASPNETCORE_URLS is already set correctly above
+# Force app to listen on port 8000 (override Koyeb's PORT env var)
+ENV ASPNETCORE_URLS=http://+:8000
+
 ENTRYPOINT ["dotnet", "TripleTriadApi.dll"]
