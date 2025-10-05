@@ -1,0 +1,86 @@
+
+# Environment Variables
+@baseUrl = http://localhost:5041
+@apiPath = /api/game
+@contentType = application/json
+@accept = application/json
+@testPlayer1 = alice
+@testPlayer2 = bob
+@testMatchId = 1
+@testCardId = 1
+
+### Triple Triad API - Complete Test Flow
+# This file contains a complete test sequence for the Triple Triad API
+# Execute requests in order to test the full game flow
+
+### 1. Get Available Cards
+GET {{baseUrl}}{{apiPath}}/cards
+Accept: {{accept}}
+
+### 2. Create New Match
+POST {{baseUrl}}{{apiPath}}/match
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "playerId": "{{testPlayer1}}",
+  "opponentId": "{{testPlayer2}}"
+}
+
+### 3. Get Match Details (use matchId from step 2)
+GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}
+Accept: {{accept}}
+
+### 4. Get Player 1 Hand
+GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/hand/{{testPlayer1}}
+Accept: {{accept}}
+
+### 5. Get Player 2 Hand
+GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/hand/{{testPlayer2}}
+Accept: {{accept}}
+
+### 6. Player 1 plays first card (use cardId from hand)
+POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/play
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "playerId": "{{testPlayer1}}",
+  "cardId": {{testCardId}},
+  "x": 1,
+  "y": 1
+}
+
+### 7. Player 2 responds (use cardId from their hand)
+POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/play
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "playerId": "{{testPlayer2}}",
+  "cardId": 2,
+  "x": 0,
+  "y": 0
+}
+
+### 8. Check updated match state
+GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}
+Accept: {{accept}}
+
+### 9. Continue playing - Player 1 next move
+POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/play
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "playerId": "{{testPlayer1}}",
+  "cardId": 3,
+  "x": 2,
+  "y": 1
+}
+
+### 10. Get Waiting Matches (for matchmaking)
+GET {{baseUrl}}{{apiPath}}/matches/waiting
+Accept: {{accept}}
+
+###

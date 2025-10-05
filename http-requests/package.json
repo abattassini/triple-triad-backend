@@ -1,0 +1,13 @@
+{
+  "name": "signalr-test-scripts",
+  "version": "1.0.0",
+  "description": "Test scripts for Triple Triad SignalR GameHub",
+  "scripts": {
+    "test:hub": "node 08-test-signalr-hub.js",
+    "test:flow": "node 09-full-game-flow.js"
+  },
+  "dependencies": {
+    "@microsoft/signalr": "^8.0.0",
+    "axios": "^1.6.0"
+  }
+}

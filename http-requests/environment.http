@@ -1,0 +1,29 @@
+### Environment Configuration for Triple Triad API Tests
+# Update these URLs based on your local development setup
+
+@baseUrl = http://localhost:5041
+@apiPath = /api/game
+
+# Common Headers
+@contentType = application/json
+@accept = application/json
+
+# Test Data
+@testPlayer1 = alice
+@testPlayer2 = bob
+@aiPlayer = AI
+
+# Test Match and Card IDs (update these based on actual responses)
+@testMatchId = 1
+@testCardId = 1
+@altMatchId = 2
+
+### Health Check (if available)
+GET {{baseUrl}}/health
+Accept: {{accept}}
+
+### Test API Base
+GET {{baseUrl}}{{apiPath}}/cards
+Accept: {{accept}}
+
+###

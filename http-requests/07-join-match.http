@@ -1,0 +1,33 @@
+
+# Environment Variables
+@baseUrl = http://localhost:5041
+@apiPath = /api/game
+@contentType = application/json
+@accept = application/json
+@testMatchId = 1
+@testPlayer2 = bob
+
+### Join Existing Match
+# Allows a player to join a waiting match
+# Replace {matchId} with actual match ID from waiting matches
+POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/join
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "playerId": "{{testPlayer2}}"
+}
+
+###
+
+### Join Match - Alternative Player
+# Test joining with different player ID
+POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/join
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "playerId": "newplayer"
+}
+
+###

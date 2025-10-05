@@ -1,0 +1,55 @@
+
+# Environment Variables
+@baseUrl = http://localhost:5041
+@apiPath = /api/game
+@contentType = application/json
+@accept = application/json
+@testMatchId = 1
+@testPlayer1 = alice
+@testPlayer2 = bob
+
+### Play Card - Center Position
+# Places a card on the game board
+# Replace values with actual match ID, player ID, and card ID
+POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/play
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "playerId": "{{testPlayer1}}",
+  "cardId": 92,
+  "x": 1,
+  "y": 1
+}
+
+###
+
+### Play Card - Top Left Corner
+# Place card at position (0,0)
+POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/play
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "playerId": "{{testPlayer1}}",
+  "cardId": 2,
+  "x": 0,
+  "y": 0
+}
+
+###
+
+### Play Card - Bottom Right Corner
+# Place card at position (2,2)
+POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/play
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "playerId": "{{testPlayer2}}",
+  "cardId": 3,
+  "x": 2,
+  "y": 2
+}
+
+###

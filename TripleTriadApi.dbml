@@ -1,0 +1,74 @@
+Project TripleTriadApi {
+  database_type: 'PostgreSQL'
+  Note: '''
+    Triple Triad Card Game Database
+    Supports multiplayer Triple Triad with real-time functionality
+  '''
+}
+
+Table Card {
+  Id int [pk, increment]
+  Name string [not null]
+  Image string [not null]
+  TopValue int [not null]
+  RightValue int [not null]
+  BottomValue int [not null]
+  LeftValue int [not null]
+  Element string [default: 'none']
+  Level int [not null]
+}
+
+Table Match {
+  Id int [pk, increment]
+  Player1Id string [not null]
+  Player2Id string [not null]
+  CurrentPlayerTurn string
+  Status string [not null, default: 'waiting']
+  CreatedAt timestamp [not null, default: `now()`]
+  CompletedAt timestamp
+  WinnerId string
+  Player1Score int [not null, default: 0]
+  Player2Score int [not null, default: 0]
+  
+  indexes {
+    (Player1Id, Player2Id)
+    Status
+    CreatedAt
+  }
+}
+
+Table CardPlacement {
+  Id int [pk, increment]
+  MatchId int [not null]
+  CardId int [not null]
+  PlayerId string [not null]
+  X int [not null]
+  Y int [not null]
+  PlacedAt timestamp [not null, default: `now()`]
+  Owner string [not null]
+  
+  indexes {
+    (MatchId, X, Y) [unique]
+    MatchId
+    CardId
+  }
+}
+
+Table PlayerHand {
+  Id int [pk, increment]
+  MatchId int [not null]
+  PlayerId string [not null]
+  CardId int [not null]
+  IsUsed boolean [not null, default: false]
+  
+  indexes {
+    (MatchId, PlayerId, CardId) [unique]
+    (MatchId, PlayerId)
+    CardId
+  }
+}
+
+Ref: Match.Id < CardPlacement.MatchId [delete: cascade]
+Ref: Card.Id < CardPlacement.CardId [delete: restrict]
+Ref: Match.Id < PlayerHand.MatchId [delete: cascade]
+Ref: Card.Id < PlayerHand.CardId [delete: restrict]

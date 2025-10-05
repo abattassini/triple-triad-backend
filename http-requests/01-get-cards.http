@@ -1,0 +1,12 @@
+
+# Environment Variables
+@baseUrl = http://localhost:5041
+@apiPath = /api/game
+@accept = application/json
+
+### Get All Cards
+# Retrieves all available cards in the game
+GET {{baseUrl}}{{apiPath}}/cards
+Accept: {{accept}}
+
+###

@@ -1,0 +1,22 @@
+
+# Environment Variables
+@baseUrl = http://localhost:5041
+@apiPath = /api/game
+@accept = application/json
+@testMatchId = 1
+@altMatchId = 2
+
+### Get Match Details
+# Retrieves match information including board state and scores
+# Replace {matchId} with actual match ID from create-match response
+GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}
+Accept: {{accept}}
+
+###
+
+### Get Match Details (Alternative ID)
+# Test with different match ID
+GET {{baseUrl}}{{apiPath}}/match/{{altMatchId}}
+Accept: {{accept}}
+
+###

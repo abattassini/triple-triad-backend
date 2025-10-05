@@ -1,0 +1,17 @@
+# Ignore build artifacts
+bin/
+obj/
+.vs/
+
+# Ignore auto-generated files
+**/Migrations/**
+*.Designer.cs
+*.g.cs
+*.generated.cs
+
+# Ignore packages
+packages/
+*.nupkg
+
+# Ignore config files
+*.config

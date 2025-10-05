@@ -1,0 +1,35 @@
+
+# Environment Variables
+@baseUrl = http://localhost:5041
+@apiPath = /api/game
+@contentType = application/json
+@accept = application/json
+@testPlayer1 = alice
+@testPlayer2 = bob
+@aiPlayer = AI
+
+### Create New Match
+# Creates a new match between two players
+POST {{baseUrl}}{{apiPath}}/match
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "playerId": "{{testPlayer1}}",
+  "opponentId": "{{testPlayer2}}"
+}
+
+###
+
+### Create Match vs AI
+# Creates a new match against AI
+POST {{baseUrl}}{{apiPath}}/match
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "playerId": "{{testPlayer1}}",
+  "opponentId": "{{aiPlayer}}"
+}
+
+###

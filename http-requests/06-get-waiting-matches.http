@@ -1,0 +1,12 @@
+
+# Environment Variables
+@baseUrl = http://localhost:5041
+@apiPath = /api/game
+@accept = application/json
+
+### Get Waiting Matches
+# Retrieves all matches waiting for a second player to join
+GET {{baseUrl}}{{apiPath}}/matches/waiting
+Accept: {{accept}}
+
+###

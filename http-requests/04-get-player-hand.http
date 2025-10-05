@@ -1,0 +1,31 @@
+
+# Environment Variables
+@baseUrl = http://localhost:5041
+@apiPath = /api/game
+@accept = application/json
+@testMatchId = 1
+@testPlayer1 = alice
+@testPlayer2 = bob
+@aiPlayer = AI
+
+### Get Player Hand
+# Retrieves the cards in a player's hand for a specific match
+# Replace {matchId} and {playerId} with actual values
+GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/hand/{{testPlayer1}}
+Accept: {{accept}}
+
+###
+
+### Get Player 2 Hand
+# Get second player's hand
+GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/hand/{{testPlayer2}}
+Accept: {{accept}}
+
+###
+
+### Get AI Hand (for testing)
+# Get AI player's hand
+GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/hand/{{aiPlayer}}
+Accept: {{accept}}
+
+###
