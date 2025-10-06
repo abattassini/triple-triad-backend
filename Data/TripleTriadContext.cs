@@ -13,6 +13,22 @@ namespace TripleTriadApi.Data
         public DbSet<CardPlacement> CardPlacements { get; set; }
         public DbSet<PlayerHand> PlayerHands { get; set; }
 
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        {
+            // Only configure if not already configured (for design-time support)
+            if (!optionsBuilder.IsConfigured)
+            {
+                // Use connection string from environment variable
+                var connectionString = Environment.GetEnvironmentVariable(
+                    "ConnectionStrings__DefaultConnection"
+                );
+                if (!string.IsNullOrEmpty(connectionString))
+                {
+                    optionsBuilder.UseNpgsql(connectionString);
+                }
+            }
+        }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);

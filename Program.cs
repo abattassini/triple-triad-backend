@@ -6,21 +6,41 @@ using TripleTriadApi.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Load environment variables from .env file (for local development)
+if (builder.Environment.IsDevelopment())
+{
+    DotNetEnv.Env.Load();
+}
+
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 
 // Database configuration
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-if (string.IsNullOrEmpty(connectionString))
+var useInMemoryDatabase = builder.Configuration.GetValue<bool>("UseInMemoryDatabase", true);
+
+if (useInMemoryDatabase)
 {
-    // Use in-memory database for development if no connection string is provided
+    // Use in-memory database for development
+    Console.WriteLine("🗄️  Using In-Memory Database");
     builder.Services.AddDbContext<TripleTriadContext>(options =>
         options.UseInMemoryDatabase("TripleTriadDb")
     );
 }
 else
 {
+    // Use PostgreSQL for production
+    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
+    if (string.IsNullOrEmpty(connectionString))
+    {
+        throw new InvalidOperationException(
+            "PostgreSQL connection string is required when UseInMemoryDatabase is false. "
+                + "Set the 'ConnectionStrings:DefaultConnection' configuration or set 'UseInMemoryDatabase' to true."
+        );
+    }
+
+    Console.WriteLine("🐘 Using PostgreSQL Database");
     builder.Services.AddDbContext<TripleTriadContext>(options =>
         options.UseNpgsql(connectionString)
     );
@@ -36,8 +56,12 @@ builder.Services.AddScoped<CardSeederService>();
 builder.Services.AddSignalR();
 
 // Add CORS
-var allowedOrigins = builder.Configuration.GetSection("AllowedOrigins").Get<string[]>()
-    ?? new[] { "http://localhost:5173", "https://abattassini.github.io" };
+var allowedOrigins =
+    builder.Configuration.GetSection("AllowedOrigins").Get<string[]>() ?? new[]
+    {
+        "http://localhost:5173",
+        "https://abattassini.github.io",
+    };
 
 builder.Services.AddCors(options =>
 {
@@ -45,11 +69,7 @@ builder.Services.AddCors(options =>
         "AllowFrontend",
         policy =>
         {
-            policy
-                .WithOrigins(allowedOrigins)
-                .AllowAnyMethod()
-                .AllowAnyHeader()
-                .AllowCredentials();
+            policy.WithOrigins(allowedOrigins).AllowAnyMethod().AllowAnyHeader().AllowCredentials();
         }
     );
 
