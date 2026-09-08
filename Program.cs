@@ -9,7 +9,15 @@ var builder = WebApplication.CreateBuilder(args);
 // Load environment variables from .env file (for local development)
 if (builder.Environment.IsDevelopment())
 {
-    DotNetEnv.Env.Load();
+    // Use NoClobber so real environment variables (e.g. set by "Run Backend" VS Code
+    // tasks, CI, or your shell) take precedence over .env file values.
+    // This lets you switch databases without editing any file:
+    //   UseInMemoryDatabase=true  → local in-memory DB
+    //   UseInMemoryDatabase=false → remote Supabase PostgreSQL
+    DotNetEnv.Env.Load((string)null, DotNetEnv.LoadOptions.NoClobber());
+    // Reload configuration so .env values (e.g. UseInMemoryDatabase,
+    // ConnectionStrings__DefaultConnection) are picked up by the config system.
+    ((IConfigurationRoot)builder.Configuration).Reload();
 }
 
 // Add services to the container.

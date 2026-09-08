@@ -62,7 +62,7 @@ namespace TripleTriadApi.Services
                     TopValue = 8,
                     RightValue = 5,
                     BottomValue = 10,
-                    LeftValue = 4,
+                    LeftValue = 6,
                     Element = "none",
                     Level = 10,
                 },
