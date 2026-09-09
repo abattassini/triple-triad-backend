@@ -1,0 +1,90 @@
+# Player Authentication Flow (register → sign-in → me)
+# Requires the backend running locally (Development profile, port 5041).
+
+@baseUrl = http://localhost:5041
+@contentType = application/json
+@accept = application/json
+
+### 1. Register a new player
+POST {{baseUrl}}/api/player/register
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "login": "alice",
+  "email": "alice@example.com",
+  "password": "Secret123"
+}
+
+### 2. Register with a duplicate login → 409
+POST {{baseUrl}}/api/player/register
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "login": "alice",
+  "email": "other@example.com",
+  "password": "Secret123"
+}
+
+### 3. Register with a duplicate email → 409
+POST {{baseUrl}}/api/player/register
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "login": "bob",
+  "email": "alice@example.com",
+  "password": "Secret123"
+}
+
+### 4. Sign in with LOGIN → 200 + JWT
+# Use the "token" value from the response for the "me" request.
+POST {{baseUrl}}/api/player/sign-in
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "identifier": "alice",
+  "password": "Secret123"
+}
+
+### 5. Sign in with EMAIL → 200 + JWT
+POST {{baseUrl}}/api/player/sign-in
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "identifier": "alice@example.com",
+  "password": "Secret123"
+}
+
+### 6. Sign in with a wrong password → 401
+POST {{baseUrl}}/api/player/sign-in
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "identifier": "alice",
+  "password": "WrongPass1"
+}
+
+### 7. Sign in with an unknown user → 401
+POST {{baseUrl}}/api/player/sign-in
+Content-Type: {{contentType}}
+Accept: {{accept}}
+
+{
+  "identifier": "ghost",
+  "password": "Secret123"
+}
+
+### 8. Get current player with a valid Bearer token → 200
+# Paste the token from step 4 below.
+GET {{baseUrl}}/api/player/me
+Authorization: Bearer <PASTE_TOKEN_HERE>
+Accept: {{accept}}
+
+### 9. Get current player WITHOUT a token → 401
+GET {{baseUrl}}/api/player/me
+Accept: {{accept}}

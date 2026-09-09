@@ -1,4 +1,7 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 using TripleTriadApi.Data;
 using TripleTriadApi.Hubs;
 using TripleTriadApi.Repositories;
@@ -63,6 +66,58 @@ builder.Services.AddScoped<GamePlayService>();
 builder.Services.AddScoped<CardSeederService>();
 builder.Services.AddScoped<PasswordHasherService>();
 builder.Services.AddScoped<RegisterPlayerRequestValidator>();
+builder.Services.AddScoped<TokenService>();
+
+// JWT authentication (HS256, same SymmetricSecurityKey as the issued tokens).
+var jwtSecret =
+    builder.Configuration["Supabase:JwtSecret"]
+    ?? Environment.GetEnvironmentVariable("Supabase__JwtSecret");
+
+if (string.IsNullOrEmpty(jwtSecret))
+{
+    Console.WriteLine("⚠️  JWT Secret not found — sign-in/token issuance will not work.");
+    Console.WriteLine("   Set Supabase__JwtSecret in .env or as an environment variable.");
+}
+else
+{
+    Console.WriteLine("🔐 JWT authentication configured");
+    builder
+        .Services.AddAuthentication(options =>
+        {
+            options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+            options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+        })
+        .AddJwtBearer(options =>
+        {
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+                ValidateIssuer = false, // self-issued tokens, no issuer claim required
+                ValidateAudience = false, // no audience claim required
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.Zero,
+            };
+
+            // Allow SignalR to authenticate via ?access_token= query parameter.
+            options.Events = new JwtBearerEvents
+            {
+                OnMessageReceived = context =>
+                {
+                    var accessToken = context.Request.Query["access_token"];
+                    var path = context.HttpContext.Request.Path;
+                    if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/gamehub"))
+                    {
+                        context.Token = accessToken;
+                    }
+
+                    return Task.CompletedTask;
+                },
+            };
+        });
+
+    builder.Services.AddAuthorization();
+}
 
 // Add SignalR
 builder.Services.AddSignalR();
@@ -117,6 +172,7 @@ else
     app.UseCors("AllowFrontend");
 }
 
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
