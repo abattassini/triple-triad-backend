@@ -12,6 +12,7 @@ namespace TripleTriadApi.Data
         public DbSet<Match> Matches { get; set; }
         public DbSet<CardPlacement> CardPlacements { get; set; }
         public DbSet<PlayerHand> PlayerHands { get; set; }
+        public DbSet<Player> Players { get; set; }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
@@ -32,6 +33,19 @@ namespace TripleTriadApi.Data
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
+
+            // Player entity configuration
+            modelBuilder.Entity<Player>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Login).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.Email).IsRequired().HasMaxLength(254);
+                entity.Property(e => e.PasswordHash).IsRequired().HasMaxLength(60);
+
+                // Unique constraints for authentication
+                entity.HasIndex(e => e.Login).IsUnique();
+                entity.HasIndex(e => e.Email).IsUnique();
+            });
 
             // Card entity configuration
             modelBuilder.Entity<Card>(entity =>

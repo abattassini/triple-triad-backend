@@ -3,6 +3,7 @@ using TripleTriadApi.Data;
 using TripleTriadApi.Hubs;
 using TripleTriadApi.Repositories;
 using TripleTriadApi.Services;
+using TripleTriadApi.Validators;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -56,9 +57,12 @@ else
 
 // Register services
 builder.Services.AddScoped<IGameRepository, GameRepository>();
+builder.Services.AddScoped<IPlayerRepository, PlayerRepository>();
 builder.Services.AddScoped<GameLogicService>();
 builder.Services.AddScoped<GamePlayService>();
 builder.Services.AddScoped<CardSeederService>();
+builder.Services.AddScoped<PasswordHasherService>();
+builder.Services.AddScoped<RegisterPlayerRequestValidator>();
 
 // Add SignalR
 builder.Services.AddSignalR();
