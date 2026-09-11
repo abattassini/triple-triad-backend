@@ -5,8 +5,9 @@
 @accept = application/json
 
 ### Get Waiting Matches
-# Retrieves all matches waiting for a second player to join
+# Retrieves all matches waiting for a second player to join (requires auth)
 GET {{baseUrl}}{{apiPath}}/matches/waiting
 Accept: {{accept}}
+{{authHeader}}
 
 ###

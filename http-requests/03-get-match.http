@@ -11,6 +11,7 @@
 # Replace {matchId} with actual match ID from create-match response
 GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}
 Accept: {{accept}}
+{{authHeader}}
 
 ###
 
@@ -18,5 +19,6 @@ Accept: {{accept}}
 # Test with different match ID
 GET {{baseUrl}}{{apiPath}}/match/{{altMatchId}}
 Accept: {{accept}}
+{{authHeader}}
 
 ###

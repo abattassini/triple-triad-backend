@@ -9,14 +9,14 @@
 @testPlayer2 = bob
 
 ### Play Card - Center Position
-# Places a card on the game board
-# Replace values with actual match ID, player ID, and card ID
+# Places a card on the game board. The player comes from the JWT.
+# Replace values with actual match ID and card ID
 POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/play
 Content-Type: {{contentType}}
 Accept: {{accept}}
+{{authHeader}}
 
 {
-  "playerId": "{{testPlayer1}}",
   "cardId": 92,
   "x": 1,
   "y": 1
@@ -29,9 +29,9 @@ Accept: {{accept}}
 POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/play
 Content-Type: {{contentType}}
 Accept: {{accept}}
+{{authHeader}}
 
 {
-  "playerId": "{{testPlayer1}}",
   "cardId": 2,
   "x": 0,
   "y": 0
@@ -44,9 +44,9 @@ Accept: {{accept}}
 POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/play
 Content-Type: {{contentType}}
 Accept: {{accept}}
+{{authHeader}}
 
 {
-  "playerId": "{{testPlayer2}}",
   "cardId": 3,
   "x": 2,
   "y": 2

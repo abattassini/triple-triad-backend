@@ -9,13 +9,13 @@
 @aiPlayer = AI
 
 ### Create New Match
-# Creates a new match between two players
+# Creates a new match. The creator is taken from the JWT (no playerId in body).
 POST {{baseUrl}}{{apiPath}}/match
 Content-Type: {{contentType}}
 Accept: {{accept}}
+{{authHeader}}
 
 {
-  "playerId": "{{testPlayer1}}",
   "opponentId": "{{testPlayer2}}"
 }
 
@@ -26,9 +26,9 @@ Accept: {{accept}}
 POST {{baseUrl}}{{apiPath}}/match
 Content-Type: {{contentType}}
 Accept: {{accept}}
+{{authHeader}}
 
 {
-  "playerId": "{{testPlayer1}}",
   "opponentId": "{{aiPlayer}}"
 }
 

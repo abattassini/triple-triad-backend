@@ -8,26 +8,24 @@
 @testPlayer2 = bob
 
 ### Join Existing Match
-# Allows a player to join a waiting match
+# Allows an authenticated player to join a waiting match.
 # Replace {matchId} with actual match ID from waiting matches
 POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/join
 Content-Type: {{contentType}}
 Accept: {{accept}}
+{{authHeader}}
 
-{
-  "playerId": "{{testPlayer2}}"
-}
+{}
 
 ###
 
-### Join Match - Alternative Player
-# Test joining with different player ID
+### Join Match - Cannot Join Own Match
+# A player cannot join their own match (identity comes from the JWT)
 POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/join
 Content-Type: {{contentType}}
 Accept: {{accept}}
+{{authHeader}}
 
-{
-  "playerId": "newplayer"
-}
+{}
 
 ###

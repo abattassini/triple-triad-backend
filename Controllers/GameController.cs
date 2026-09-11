@@ -1,5 +1,7 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 using TripleTriadApi.Models;
 using TripleTriadApi.Repositories;
 using TripleTriadApi.Services;
@@ -25,22 +27,36 @@ namespace TripleTriadApi.Controllers
             _gamePlayService = gamePlayService;
         }
 
+        // The JWT subject is the player's login, which is also the playerId
+        // used across the game layer.
+        private string? GetCurrentUserId()
+        {
+            return User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+        }
+
         [HttpGet("cards")]
         public async Task<ActionResult<List<Card>>> GetCards()
         {
+            // Cards are static game data (not user-specific), so this endpoint
+            // stays public so the app can render the card gallery pre-auth.
             var cards = await _gameRepository.GetAllCardsAsync();
             return Ok(cards);
         }
 
+        [Authorize]
         [HttpPost("match")]
         public async Task<ActionResult<object>> CreateMatch([FromBody] CreateMatchRequest request)
         {
             try
             {
+                var playerId = GetCurrentUserId();
+                if (string.IsNullOrEmpty(playerId))
+                {
+                    return Unauthorized(new { error = "User not authenticated" });
+                }
+
                 // Check if player already has an active match
-                var existingMatch = await _gameRepository.GetActiveMatchForPlayerAsync(
-                    request.PlayerId
-                );
+                var existingMatch = await _gameRepository.GetActiveMatchForPlayerAsync(playerId);
                 if (existingMatch is not null)
                 {
                     return BadRequest(new { error = "Player already has an active match" });
@@ -50,7 +66,7 @@ namespace TripleTriadApi.Controllers
                 string? opponent = request.OpponentId;
 
                 // Create new match
-                var match = await _gameRepository.CreateMatchAsync(request.PlayerId, opponent);
+                var match = await _gameRepository.CreateMatchAsync(playerId, opponent);
 
                 // Get all available cards and create random hands
                 var allCards = await _gameRepository.GetAllCardsAsync();
@@ -69,10 +85,7 @@ namespace TripleTriadApi.Controllers
                     player1Hand,
                     player2Hand
                 ); // Get the player's hand directly from repository
-                var playerHand = await _gameRepository.GetPlayerHandAsync(
-                    match.Id,
-                    request.PlayerId
-                );
+                var playerHand = await _gameRepository.GetPlayerHandAsync(match.Id, playerId);
 
                 return Ok(
                     new
@@ -111,6 +124,7 @@ namespace TripleTriadApi.Controllers
             }
         }
 
+        [Authorize]
         [HttpGet("match/{matchId}")]
         public async Task<ActionResult<object>> GetMatch(int matchId)
         {
@@ -163,10 +177,18 @@ namespace TripleTriadApi.Controllers
             );
         }
 
-        [HttpGet("match/{matchId}/hand/{playerId}")]
-        public async Task<ActionResult<List<object>>> GetPlayerHand(int matchId, string playerId)
+        [Authorize]
+        [HttpGet("match/{matchId}/hand")]
+        public async Task<ActionResult<List<object>>> GetPlayerHand(int matchId)
         {
-            var hand = await _gameRepository.GetPlayerHandAsync(matchId, playerId);
+            var userId = GetCurrentUserId();
+            if (string.IsNullOrEmpty(userId))
+            {
+                return Unauthorized(new { error = "User not authenticated" });
+            }
+
+            // The authenticated user can only ever see their own hand.
+            var hand = await _gameRepository.GetPlayerHandAsync(matchId, userId);
             var cards = hand.Select(ph => new
                 {
                     ph.Card.Id,
@@ -184,18 +206,25 @@ namespace TripleTriadApi.Controllers
             return Ok(cards);
         }
 
+        [Authorize]
         [HttpPost("match/{matchId}/play")]
         public async Task<ActionResult<object>> PlayCard(
             int matchId,
             [FromBody] PlayCardRequest request
         )
         {
+            var playerId = GetCurrentUserId();
+            if (string.IsNullOrEmpty(playerId))
+            {
+                return Unauthorized(new { error = "User not authenticated" });
+            }
+
             var result = await _gamePlayService.PlayCardAsync(
                 matchId,
                 request.CardId,
                 request.X,
                 request.Y,
-                request.PlayerId
+                playerId
             );
 
             if (!result.IsSuccess)
@@ -222,6 +251,7 @@ namespace TripleTriadApi.Controllers
             );
         }
 
+        [Authorize]
         [HttpGet("matches/waiting")]
         public async Task<ActionResult<List<object>>> GetWaitingMatches()
         {
@@ -238,14 +268,18 @@ namespace TripleTriadApi.Controllers
             return Ok(result);
         }
 
+        [Authorize]
         [HttpPost("match/{matchId}/join")]
-        public async Task<ActionResult<object>> JoinMatch(
-            int matchId,
-            [FromBody] JoinMatchRequest request
-        )
+        public async Task<ActionResult<object>> JoinMatch(int matchId)
         {
             try
             {
+                var playerId = GetCurrentUserId();
+                if (string.IsNullOrEmpty(playerId))
+                {
+                    return Unauthorized(new { error = "User not authenticated" });
+                }
+
                 var match = await _gameRepository.GetMatchByIdAsync(matchId);
                 if (match is null)
                 {
@@ -257,13 +291,13 @@ namespace TripleTriadApi.Controllers
                     return BadRequest(new { error = "Match is not available for joining" });
                 }
 
-                if (match.Player1Id == request.PlayerId)
+                if (match.Player1Id == playerId)
                 {
                     return BadRequest(new { error = "Cannot join your own match" });
                 }
 
                 // Update match with second player
-                match.Player2Id = request.PlayerId;
+                match.Player2Id = playerId;
                 match.Status = "active";
 
                 // Create hand for the joining player
@@ -273,17 +307,14 @@ namespace TripleTriadApi.Controllers
                 await _gameRepository.CreatePlayerHandsAsync(
                     matchId,
                     match.Player1Id,
-                    request.PlayerId,
+                    playerId,
                     new List<Card>(),
                     player2Hand
                 );
                 await _gameRepository.UpdateMatchAsync(match);
 
                 // Get the player's hand directly
-                var playerHand = await _gameRepository.GetPlayerHandAsync(
-                    matchId,
-                    request.PlayerId
-                );
+                var playerHand = await _gameRepository.GetPlayerHandAsync(matchId, playerId);
 
                 return Ok(
                     new
@@ -323,20 +354,13 @@ namespace TripleTriadApi.Controllers
 
     public class CreateMatchRequest
     {
-        public string PlayerId { get; set; } = string.Empty;
         public string? OpponentId { get; set; }
     }
 
     public class PlayCardRequest
     {
-        public string PlayerId { get; set; } = string.Empty;
         public int CardId { get; set; }
         public int X { get; set; }
         public int Y { get; set; }
-    }
-
-    public class JoinMatchRequest
-    {
-        public string PlayerId { get; set; } = string.Empty;
     }
 }

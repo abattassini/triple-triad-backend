@@ -3,10 +3,13 @@
 
 @baseUrl = http://localhost:5041
 @apiPath = /api/game
-
-# Common Headers
 @contentType = application/json
 @accept = application/json
+
+# Auth: paste a JWT from POST /api/player/sign-in (see 10-auth.http).
+# All game endpoints below (except GET /cards) require this Bearer token.
+@token = <PASTE_JWT_HERE>
+@authHeader = Authorization: Bearer {{token}}
 
 # Test Data
 @testPlayer1 = alice

@@ -9,23 +9,18 @@
 @aiPlayer = AI
 
 ### Get Player Hand
-# Retrieves the cards in a player's hand for a specific match
-# Replace {matchId} and {playerId} with actual values
-GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/hand/{{testPlayer1}}
+# Retrieves the current user's hand for a match (identity comes from the JWT,
+# so there is no playerId in the URL).
+GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/hand
 Accept: {{accept}}
+{{authHeader}}
 
 ###
 
 ### Get Player 2 Hand
-# Get second player's hand
-GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/hand/{{testPlayer2}}
+# Same endpoint — the server resolves the caller from the Bearer token.
+GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/hand
 Accept: {{accept}}
-
-###
-
-### Get AI Hand (for testing)
-# Get AI player's hand
-GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/hand/{{aiPlayer}}
-Accept: {{accept}}
+{{authHeader}}
 
 ###

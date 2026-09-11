@@ -8,12 +8,15 @@
 @testPlayer2 = bob
 @testMatchId = 1
 @testCardId = 1
+@token = <PASTE_JWT_HERE>
+@authHeader = Authorization: Bearer {{token}}
 
 ### Triple Triad API - Complete Test Flow
 # This file contains a complete test sequence for the Triple Triad API
-# Execute requests in order to test the full game flow
+# Execute requests in order to test the full game flow.
+# NOTE: All game endpoints now require a Bearer token (identity comes from the JWT).
 
-### 1. Get Available Cards
+### 1. Get Available Cards (public)
 GET {{baseUrl}}{{apiPath}}/cards
 Accept: {{accept}}
 
@@ -21,66 +24,66 @@ Accept: {{accept}}
 POST {{baseUrl}}{{apiPath}}/match
 Content-Type: {{contentType}}
 Accept: {{accept}}
+{{authHeader}}
 
 {
-  "playerId": "{{testPlayer1}}",
   "opponentId": "{{testPlayer2}}"
 }
 
 ### 3. Get Match Details (use matchId from step 2)
 GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}
 Accept: {{accept}}
+{{authHeader}}
 
 ### 4. Get Player 1 Hand
-GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/hand/{{testPlayer1}}
+GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/hand
 Accept: {{accept}}
+{{authHeader}}
 
-### 5. Get Player 2 Hand
-GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/hand/{{testPlayer2}}
-Accept: {{accept}}
-
-### 6. Player 1 plays first card (use cardId from hand)
+### 5. Player 1 plays first card (use cardId from hand)
 POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/play
 Content-Type: {{contentType}}
 Accept: {{accept}}
+{{authHeader}}
 
 {
-  "playerId": "{{testPlayer1}}",
   "cardId": {{testCardId}},
   "x": 1,
   "y": 1
 }
 
-### 7. Player 2 responds (use cardId from their hand)
+### 6. Player 2 responds (use cardId from their hand)
 POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/play
 Content-Type: {{contentType}}
 Accept: {{accept}}
+{{authHeader}}
 
 {
-  "playerId": "{{testPlayer2}}",
   "cardId": 2,
   "x": 0,
   "y": 0
 }
 
-### 8. Check updated match state
+### 7. Check updated match state
 GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}
 Accept: {{accept}}
+{{authHeader}}
 
-### 9. Continue playing - Player 1 next move
+### 8. Continue playing - Player 1 next move
 POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/play
 Content-Type: {{contentType}}
 Accept: {{accept}}
+{{authHeader}}
 
 {
-  "playerId": "{{testPlayer1}}",
   "cardId": 3,
   "x": 2,
   "y": 1
 }
 
-### 10. Get Waiting Matches (for matchmaking)
+### 9. Get Waiting Matches (for matchmaking)
 GET {{baseUrl}}{{apiPath}}/matches/waiting
 Accept: {{accept}}
+{{authHeader}}
 
 ###

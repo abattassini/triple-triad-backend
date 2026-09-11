@@ -9,11 +9,17 @@ namespace TripleTriadApi.Hubs
     {
         private readonly IGameRepository _gameRepository;
         private readonly GamePlayService _gamePlayService;
+        private readonly TokenService _tokenService;
 
-        public GameHub(IGameRepository gameRepository, GamePlayService gamePlayService)
+        public GameHub(
+            IGameRepository gameRepository,
+            GamePlayService gamePlayService,
+            TokenService tokenService
+        )
         {
             _gameRepository = gameRepository;
             _gamePlayService = gamePlayService;
+            _tokenService = tokenService;
         }
 
         public async Task JoinMatch(int matchId)
@@ -44,8 +50,18 @@ namespace TripleTriadApi.Hubs
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"match-{matchId}");
         }
 
-        public async Task PlayCard(int matchId, int cardId, int x, int y, string playerId)
+        public async Task PlayCard(int matchId, int cardId, int x, int y, string accessToken)
         {
+            // The connection middleware does not populate the hub's user context
+            // for WebSocket transports, so we validate the JWT sent with the call.
+            var playerId = _tokenService.ValidateToken(accessToken);
+            if (string.IsNullOrEmpty(playerId))
+            {
+                Console.WriteLine("⛔ PlayCard rejected: invalid or missing JWT");
+                await Clients.Caller.SendAsync("Error", "User not authenticated");
+                return;
+            }
+
             Console.WriteLine(
                 $"🎮 PlayCard called: matchId={matchId}, cardId={cardId}, x={x}, y={y}, playerId={playerId}"
             );
