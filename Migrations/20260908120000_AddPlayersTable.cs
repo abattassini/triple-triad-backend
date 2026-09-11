@@ -1,12 +1,17 @@
 using System;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
+using TripleTriadApi.Data;
 
 #nullable disable
 
 namespace TripleTriadApi.Migrations
 {
     /// <inheritdoc />
+    [DbContext(typeof(TripleTriadContext))]
+    [Migration("20260908120000_AddPlayersTable")]
     public partial class AddPlayersTable : Migration
     {
         /// <inheritdoc />
