@@ -180,22 +180,44 @@ app.MapControllers();
 // Map SignalR hub with lowercase URL for consistency
 app.MapHub<GameHub>("/gamehub");
 
-// Seed database
+// Apply migrations and seed the database
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<TripleTriadContext>();
+    var startupLogger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
     // Apply migrations only if using a real database (not in-memory)
     if (!context.Database.IsInMemory())
     {
         try
         {
+            var pendingMigrations = (await context.Database.GetPendingMigrationsAsync()).ToList();
+            if (pendingMigrations.Count > 0)
+            {
+                startupLogger.LogInformation(
+                    "Applying {Count} pending migration(s): {Migrations}",
+                    pendingMigrations.Count,
+                    string.Join(", ", pendingMigrations)
+                );
+            }
+
             await context.Database.MigrateAsync();
+            startupLogger.LogInformation("Database schema is up to date with all migrations.");
         }
         catch (Exception ex)
         {
-            var migrationLogger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-            migrationLogger.LogError(ex, "An error occurred while migrating the database.");
+            // Fail fast: a swallowed migration error lets the app run against a stale or
+            // divergent schema, which later surfaces as confusing runtime errors
+            // (e.g. Postgres 42703 "column ... does not exist"). A startup failure with
+            // the real cause is far easier to diagnose.
+            startupLogger.LogCritical(
+                ex,
+                "Database migration failed - refusing to start against an inconsistent schema. "
+                    + "Verify the connection string (.env / environment variables), then run "
+                    + "'dotnet ef migrations list' and 'dotnet ef database update' to inspect "
+                    + "and reconcile the schema."
+            );
+            throw;
         }
     }
 
