@@ -247,6 +247,16 @@ namespace TripleTriadApi.Controllers
                     currentPlayer = result.UpdatedMatch!.CurrentPlayerTurn,
                     isGameComplete = result.GameResult.IsGameComplete,
                     winnerId = result.GameResult.WinnerId,
+                    rewards =
+                        result.Rewards is null
+                            ? null
+                            : new
+                            {
+                                player1Coins = result.Rewards.Player1Coins,
+                                player1Experience = result.Rewards.Player1Experience,
+                                player2Coins = result.Rewards.Player2Coins,
+                                player2Experience = result.Rewards.Player2Experience,
+                            },
                 }
             );
         }

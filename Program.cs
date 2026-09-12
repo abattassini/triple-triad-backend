@@ -67,6 +67,7 @@ builder.Services.AddScoped<CardSeederService>();
 builder.Services.AddScoped<PasswordHasherService>();
 builder.Services.AddScoped<RegisterPlayerRequestValidator>();
 builder.Services.AddScoped<TokenService>();
+builder.Services.AddScoped<MatchRewardService>();
 
 // JWT authentication (HS256, same SymmetricSecurityKey as the issued tokens).
 var jwtSecret =

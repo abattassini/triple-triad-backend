@@ -41,6 +41,14 @@ namespace TripleTriadApi.Data
                 entity.Property(e => e.Login).IsRequired().HasMaxLength(100);
                 entity.Property(e => e.Email).IsRequired().HasMaxLength(254);
                 entity.Property(e => e.PasswordHash).IsRequired().HasMaxLength(60);
+                entity.Property(e => e.AvatarUrl).HasMaxLength(300);
+
+                // Progression & economy defaults keep existing rows and new inserts valid.
+                entity.Property(e => e.Coins).HasDefaultValue(0);
+                entity.Property(e => e.Experience).HasDefaultValue(0);
+                entity.Property(e => e.Wins).HasDefaultValue(0);
+                entity.Property(e => e.Losses).HasDefaultValue(0);
+                entity.Property(e => e.Ties).HasDefaultValue(0);
 
                 // Unique constraints for authentication
                 entity.HasIndex(e => e.Login).IsUnique();

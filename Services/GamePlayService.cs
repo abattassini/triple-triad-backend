@@ -7,11 +7,17 @@ namespace TripleTriadApi.Services
     {
         private readonly IGameRepository _gameRepository;
         private readonly GameLogicService _gameLogic;
+        private readonly MatchRewardService _matchRewardService;
 
-        public GamePlayService(IGameRepository gameRepository, GameLogicService gameLogic)
+        public GamePlayService(
+            IGameRepository gameRepository,
+            GameLogicService gameLogic,
+            MatchRewardService matchRewardService
+        )
         {
             _gameRepository = gameRepository;
             _gameLogic = gameLogic;
+            _matchRewardService = matchRewardService;
         }
 
         public class PlayCardServiceResult
@@ -20,6 +26,9 @@ namespace TripleTriadApi.Services
             public string? ErrorMessage { get; set; }
             public GameLogicService.PlayCardResult? GameResult { get; set; }
             public Match? UpdatedMatch { get; set; }
+
+            // Populated only on the move that completes the match.
+            public MatchRewardService.MatchRewardResult? Rewards { get; set; }
         }
 
         public async Task<PlayCardServiceResult> PlayCardAsync(
@@ -85,8 +94,8 @@ namespace TripleTriadApi.Services
                     };
                 }
 
-                // 5. Persist all changes to database
-                await PersistGameChanges(
+                // 5. Persist all changes to database (awards rewards when the match completes)
+                var rewards = await PersistGameChanges(
                     matchId,
                     cardId,
                     playerId,
@@ -105,6 +114,7 @@ namespace TripleTriadApi.Services
                     IsSuccess = true,
                     GameResult = gameResult,
                     UpdatedMatch = updatedMatch,
+                    Rewards = rewards,
                 };
             }
             catch (Exception ex)
@@ -117,7 +127,7 @@ namespace TripleTriadApi.Services
             }
         }
 
-        private async Task PersistGameChanges(
+        private async Task<MatchRewardService.MatchRewardResult?> PersistGameChanges(
             int matchId,
             int cardId,
             string playerId,
@@ -164,14 +174,21 @@ namespace TripleTriadApi.Services
                 match.Player2Id
             );
 
-            if (gameResult.IsGameComplete)
+            MatchRewardService.MatchRewardResult? rewards = null;
+
+            if (gameResult.IsGameComplete && match.Status != "completed")
             {
                 match.Status = "completed";
                 match.CompletedAt = DateTime.UtcNow;
                 match.WinnerId = gameResult.WinnerId;
+
+                // Award coins/XP + W/L/T exactly once, before persisting the final match state.
+                rewards = await _matchRewardService.AwardForMatchAsync(match);
             }
 
             await _gameRepository.UpdateMatchAsync(match);
+
+            return rewards;
         }
     }
 }

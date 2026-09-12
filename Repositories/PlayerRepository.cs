@@ -11,6 +11,7 @@ namespace TripleTriadApi.Repositories
         Task<bool> LoginExistsAsync(string login);
         Task<bool> EmailExistsAsync(string email);
         Task<Player> CreateAsync(Player player);
+        Task<Player> UpdateAsync(Player player);
     }
 
     public class PlayerRepository(TripleTriadContext context) : IPlayerRepository
@@ -40,6 +41,14 @@ namespace TripleTriadApi.Repositories
         public async Task<Player> CreateAsync(Player player)
         {
             _context.Players.Add(player);
+            await _context.SaveChangesAsync();
+
+            return player;
+        }
+
+        public async Task<Player> UpdateAsync(Player player)
+        {
+            _context.Players.Update(player);
             await _context.SaveChangesAsync();
 
             return player;

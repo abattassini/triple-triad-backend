@@ -67,16 +67,7 @@ namespace TripleTriadApi.Controllers
                     }
                 );
 
-                return StatusCode(
-                    201,
-                    new
-                    {
-                        id = player.Id,
-                        login = player.Login,
-                        email = player.Email,
-                        createdAt = player.CreatedAt,
-                    }
-                );
+                return StatusCode(201, ToProfile(player));
             }
             catch (Exception ex)
             {
@@ -113,19 +104,7 @@ namespace TripleTriadApi.Controllers
 
                 var token = _tokenService.IssueToken(player);
 
-                return Ok(
-                    new
-                    {
-                        token,
-                        player = new
-                        {
-                            id = player.Id,
-                            login = player.Login,
-                            email = player.Email,
-                            createdAt = player.CreatedAt,
-                        },
-                    }
-                );
+                return Ok(new { token, player = ToProfile(player) });
             }
             catch (Exception ex)
             {
@@ -154,15 +133,7 @@ namespace TripleTriadApi.Controllers
                     return NotFound(new { error = "Player not found" });
                 }
 
-                return Ok(
-                    new
-                    {
-                        id = player.Id,
-                        login = player.Login,
-                        email = player.Email,
-                        createdAt = player.CreatedAt,
-                    }
-                );
+                return Ok(ToProfile(player));
             }
             catch (Exception ex)
             {
@@ -174,6 +145,25 @@ namespace TripleTriadApi.Controllers
         {
             return User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
         }
+
+        /// <summary>
+        /// Shared player projection used by register, sign-in and me so the frontend
+        /// always receives the same profile shape (including stats and avatar).
+        /// </summary>
+        private static object ToProfile(Player player) =>
+            new
+            {
+                id = player.Id,
+                login = player.Login,
+                email = player.Email,
+                createdAt = player.CreatedAt,
+                coins = player.Coins,
+                experience = player.Experience,
+                wins = player.Wins,
+                losses = player.Losses,
+                ties = player.Ties,
+                avatarUrl = player.AvatarUrl,
+            };
 
         /// <summary>
         /// Returns the first validation failure message, or null when valid.

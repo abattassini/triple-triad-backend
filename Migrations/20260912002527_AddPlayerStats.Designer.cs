@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TripleTriadApi.Data;
@@ -11,9 +12,11 @@ using TripleTriadApi.Data;
 namespace TripleTriadApi.Migrations
 {
     [DbContext(typeof(TripleTriadContext))]
-    partial class TripleTriadContextModelSnapshot : ModelSnapshot
+    [Migration("20260912002527_AddPlayerStats")]
+    partial class AddPlayerStats
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

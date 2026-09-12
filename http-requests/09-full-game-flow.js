@@ -211,6 +211,39 @@ async function testFullGameFlow() {
             console.log(`   ${row}`);
         }
 
+        // Step 6b: Verify coins/XP + W/L/T were awarded (win 200/50, tie 80/15, loss 20/0)
+        console.log("\n📍 Step 6b: Checking player stats after the match...");
+        const p1Profile = (await axios.get(`${baseUrl}/api/player/me`, { headers: auth1 })).data;
+        const p2Profile = (await axios.get(`${baseUrl}/api/player/me`, { headers: auth2 })).data;
+
+        const isDraw = !finalMatch.winnerId;
+        const p1Won = finalMatch.winnerId === player1Id;
+
+        const expectedFor = (isWinner) =>
+            isDraw
+                ? { coins: 80, experience: 15, wins: 0, losses: 0, ties: 1 }
+                : isWinner
+                  ? { coins: 200, experience: 50, wins: 1, losses: 0, ties: 0 }
+                  : { coins: 20, experience: 0, wins: 0, losses: 1, ties: 0 };
+
+        const checkReward = (label, profile, exp) => {
+            const ok =
+                profile.coins === exp.coins &&
+                profile.experience === exp.experience &&
+                profile.wins === exp.wins &&
+                profile.losses === exp.losses &&
+                profile.ties === exp.ties;
+            console.log(
+                `   ${ok ? "✅" : "❌"} ${label}: ${profile.coins} coins, ${profile.experience} XP, ` +
+                    `${profile.wins}W/${profile.losses}L/${profile.ties}T` +
+                    ` (expected ${exp.coins} coins, ${exp.experience} XP, ` +
+                    `${exp.wins}W/${exp.losses}L/${exp.ties}T)`
+            );
+        };
+
+        checkReward(player1Id, p1Profile, expectedFor(p1Won));
+        checkReward(player2Id, p2Profile, expectedFor(!p1Won && !isDraw));
+
         console.log("\n✅ Full game flow test completed!");
 
         // Step 7: Verify REST PlayCard (and hand) is rejected without a token → 401
