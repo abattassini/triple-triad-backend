@@ -61,7 +61,8 @@ namespace TripleTriadApi.Data
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
                 entity.Property(e => e.Image).IsRequired().HasMaxLength(200);
-                entity.Property(e => e.Element).HasMaxLength(20);
+                // Stored as a PostgreSQL text[] array (Npgsql maps List<string> natively).
+                entity.Property(e => e.Element).HasColumnType("text[]");
 
                 // Ensure stat values are within valid range (1-10 or A)
                 entity.Property(e => e.TopValue).HasAnnotation("Range", new[] { 1, 10 });

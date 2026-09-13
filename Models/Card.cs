@@ -9,7 +9,9 @@ namespace TripleTriadApi.Models
         public int RightValue { get; set; }
         public int BottomValue { get; set; }
         public int LeftValue { get; set; }
-        public string Element { get; set; } = "none";
+        // A card can carry zero or more elements (empty list = no element).
+        // Persisted as a PostgreSQL text[] array.
+        public List<string> Element { get; set; } = [];
         public int Level { get; set; }
 
         // Navigation properties for tracking card ownership in matches
