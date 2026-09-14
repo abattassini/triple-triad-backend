@@ -14,6 +14,7 @@ namespace TripleTriadApi.Services
         private readonly HashSet<(int X, int Y)> _capturedPositions = [];
         private readonly List<CardPlacement> _capturedCards = [];
         private readonly List<CardPlacement> _ruleCapturedCards = [];
+        private readonly List<MatchRule> _triggeredRules = [];
 
         /// <summary>Every card captured by this move (basic battle + rule captures).</summary>
         public IReadOnlyList<CardPlacement> CapturedCards => _capturedCards;
@@ -24,8 +25,8 @@ namespace TripleTriadApi.Services
         /// </summary>
         public IReadOnlyList<CardPlacement> RuleCapturedCards => _ruleCapturedCards;
 
-        /// <summary>Rules that fired while resolving this move.</summary>
-        public MatchRule TriggeredRules { get; private set; } = MatchRule.None;
+        /// <summary>Rules that fired while resolving this move (empty when none did).</summary>
+        public IReadOnlyList<MatchRule> TriggeredRules => _triggeredRules;
 
         /// <summary>
         /// Registers a captured card and flips its ownership to the player who moved. Ownership is
@@ -53,7 +54,10 @@ namespace TripleTriadApi.Services
         /// <summary>Records that a special rule fired on this move.</summary>
         public void MarkRuleTriggered(MatchRule rule)
         {
-            TriggeredRules |= rule;
+            if (!_triggeredRules.Contains(rule))
+            {
+                _triggeredRules.Add(rule);
+            }
         }
     }
 }

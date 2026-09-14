@@ -15,9 +15,9 @@ namespace TripleTriadApi.Services
             public string? WinnerId { get; set; }
 
             /// <summary>
-            /// Special rules that fired while resolving this move (bitmask; empty when none did).
+            /// Special rules that fired while resolving this move (empty when none did).
             /// </summary>
-            public MatchRule TriggeredRules { get; set; } = MatchRule.None;
+            public List<MatchRule> TriggeredRules { get; set; } = [];
         }
 
         public PlayCardResult PlayCard(
@@ -260,7 +260,7 @@ namespace TripleTriadApi.Services
                 Player2Score = player2Score,
                 IsGameComplete = isGameComplete,
                 WinnerId = winnerId,
-                TriggeredRules = captureResolution.TriggeredRules,
+                TriggeredRules = captureResolution.TriggeredRules.ToList(),
             };
         }
 
@@ -295,13 +295,14 @@ namespace TripleTriadApi.Services
         /// This is the extension point for future rules (Plus, SameWall, COMBO).
         /// </summary>
         private static void EvaluateRuleCaptures(
-            MatchRule rules,
+            List<MatchRule> rules,
             List<Collision> collisions,
             string playerId,
             CaptureResolution resolution
         )
         {
-            if (rules.HasFlag(MatchRule.Same))
+            // A rule is enabled when it appears in the match's list of rules.
+            if (rules.Contains(MatchRule.Same))
             {
                 EvaluateSameRule(collisions, playerId, resolution);
             }

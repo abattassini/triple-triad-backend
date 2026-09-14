@@ -21,11 +21,11 @@ namespace TripleTriadApi.Tests.Services
         [Fact]
         public void PlayCard_StrictWins_CapturesEveryWeakerNeighbor_WithoutRules()
         {
-            var result = PlayFourNeighborBoard(MatchRule.None);
+            var result = PlayFourNeighborBoard();
 
             Assert.True(result.IsValid);
             Assert.Equal(4, result.CapturedCards.Count);
-            Assert.Equal(MatchRule.None, result.TriggeredRules);
+            Assert.Empty(result.TriggeredRules);
         }
 
         [Fact]
@@ -34,19 +34,19 @@ namespace TripleTriadApi.Tests.Services
             var result = PlayFourNeighborBoard(MatchRule.Same);
 
             Assert.Equal(4, result.CapturedCards.Count);
-            Assert.Equal(MatchRule.None, result.TriggeredRules);
+            Assert.Empty(result.TriggeredRules);
         }
 
         [Fact]
         public void PlayCard_SingleTie_CapturesNothing_WithoutRules()
         {
-            var (result, tiePlacement, battleCaptures) = PlayLoneTieBoard(MatchRule.None);
+            var (result, tiePlacement, battleCaptures) = PlayLoneTieBoard();
 
             Assert.Equal(3, result.CapturedCards.Count);
             Assert.DoesNotContain(tiePlacement, result.CapturedCards);
             Assert.Equal(Player2, tiePlacement.Owner);
             Assert.All(battleCaptures, capture => Assert.Contains(capture, result.CapturedCards));
-            Assert.Equal(MatchRule.None, result.TriggeredRules);
+            Assert.Empty(result.TriggeredRules);
         }
 
         [Fact]
@@ -57,17 +57,17 @@ namespace TripleTriadApi.Tests.Services
             Assert.Equal(3, result.CapturedCards.Count);
             Assert.DoesNotContain(tiePlacement, result.CapturedCards);
             Assert.Equal(Player2, tiePlacement.Owner);
-            Assert.Equal(MatchRule.None, result.TriggeredRules);
+            Assert.Empty(result.TriggeredRules);
         }
 
         [Fact]
         public void PlayCard_TwoTies_CaptureNothing_WithoutRules()
         {
-            var (result, ties, _) = PlayTwoTieBoard(MatchRule.None);
+            var (result, ties, _) = PlayTwoTieBoard();
 
             Assert.Equal(2, result.CapturedCards.Count);
             Assert.All(ties, tie => Assert.Equal(Player2, tie.Owner));
-            Assert.Equal(MatchRule.None, result.TriggeredRules);
+            Assert.Empty(result.TriggeredRules);
         }
 
         [Fact]
@@ -78,7 +78,7 @@ namespace TripleTriadApi.Tests.Services
             Assert.Equal(4, result.CapturedCards.Count);
             Assert.All(ties, tie => Assert.Equal(Player1, tie.Owner));
             Assert.All(battleCaptures, capture => Assert.Equal(Player1, capture.Owner));
-            Assert.Equal(MatchRule.Same, result.TriggeredRules);
+            Assert.Equal(new[] { MatchRule.Same }, result.TriggeredRules);
         }
 
         [Fact]
@@ -98,7 +98,7 @@ namespace TripleTriadApi.Tests.Services
 
             Assert.Equal(4, result.CapturedCards.Count);
             Assert.All(result.CapturedCards, capture => Assert.Equal(Player1, capture.Owner));
-            Assert.Equal(MatchRule.Same, result.TriggeredRules);
+            Assert.Equal(new[] { MatchRule.Same }, result.TriggeredRules);
         }
 
         [Fact]
@@ -116,7 +116,7 @@ namespace TripleTriadApi.Tests.Services
             Assert.Same(winPlacement, result.CapturedCards[0]);
             Assert.Equal(Player2, tiePlacement.Owner);
             Assert.Equal(Player1, winPlacement.Owner);
-            Assert.Equal(MatchRule.None, result.TriggeredRules);
+            Assert.Empty(result.TriggeredRules);
         }
 
         [Fact]
@@ -134,7 +134,7 @@ namespace TripleTriadApi.Tests.Services
 
             Assert.True(result.IsValid);
             Assert.Equal(2, result.CapturedCards.Count);
-            Assert.Equal(MatchRule.None, result.TriggeredRules);
+            Assert.Empty(result.TriggeredRules);
         }
 
         [Fact]
@@ -149,7 +149,7 @@ namespace TripleTriadApi.Tests.Services
 
             Assert.Empty(result.CapturedCards);
             Assert.Equal(Player2, tiedNeighbor.Owner);
-            Assert.Equal(MatchRule.None, result.TriggeredRules);
+            Assert.Empty(result.TriggeredRules);
         }
 
         [Fact]
@@ -168,7 +168,7 @@ namespace TripleTriadApi.Tests.Services
             Assert.Empty(result.CapturedCards);
             Assert.Equal(Player1, ownCard.Owner);
             Assert.Equal(Player2, opponentCard.Owner);
-            Assert.Equal(MatchRule.None, result.TriggeredRules);
+            Assert.Empty(result.TriggeredRules);
         }
 
         [Fact]
@@ -185,7 +185,7 @@ namespace TripleTriadApi.Tests.Services
         [Fact]
         public void PlayCard_WithoutRules_ScoresOnlyReflectBasicCaptures()
         {
-            var (result, _, _) = PlayTwoTieBoard(MatchRule.None);
+            var (result, _, _) = PlayTwoTieBoard();
 
             // P1: 5 (start) + 3 owned on board (played + 2 captured) - 1 played = 7
             // P2: 5 (start) + 2 owned on board - 4 played = 3
@@ -213,13 +213,13 @@ namespace TripleTriadApi.Tests.Services
             var result = GameLogic.PlayCard(match, placements, playedCard, Player1, 1, 1);
 
             Assert.Equal(4, result.CapturedCards.Count);
-            Assert.Equal(MatchRule.None, result.TriggeredRules);
+            Assert.Empty(result.TriggeredRules);
             Assert.True(result.IsGameComplete);
             Assert.Equal(Player1, result.WinnerId);
             Assert.Equal(9, result.Player1Score);
             Assert.Equal(1, result.Player2Score);
         }
-        private static GameLogicService.PlayCardResult PlayFourNeighborBoard(MatchRule rules)
+        private static GameLogicService.PlayCardResult PlayFourNeighborBoard(params MatchRule[] rules)
         {
             var match = CreateMatch(rules);
             var playedCard = CreateCard(1, 9, 9, 9, 9);
@@ -238,7 +238,7 @@ namespace TripleTriadApi.Tests.Services
             GameLogicService.PlayCardResult Result,
             CardPlacement Tie,
             List<CardPlacement> BattleCaptures
-        ) PlayLoneTieBoard(MatchRule rules)
+        ) PlayLoneTieBoard(params MatchRule[] rules)
         {
             var match = CreateMatch(rules);
             var playedCard = CreateCard(1, top: 5, right: 9, bottom: 9, left: 9);
@@ -260,7 +260,7 @@ namespace TripleTriadApi.Tests.Services
             GameLogicService.PlayCardResult Result,
             List<CardPlacement> Ties,
             List<CardPlacement> BattleCaptures
-        ) PlayTwoTieBoard(MatchRule rules)
+        ) PlayTwoTieBoard(params MatchRule[] rules)
         {
             var match = CreateMatch(rules);
             var playedCard = CreateCard(1, top: 5, right: 5, bottom: 9, left: 9);
@@ -282,7 +282,7 @@ namespace TripleTriadApi.Tests.Services
             return (result, ties, battleCaptures);
         }
 
-        private static Match CreateMatch(MatchRule rules)
+        private static Match CreateMatch(params MatchRule[] rules)
         {
             return new Match
             {
@@ -293,7 +293,7 @@ namespace TripleTriadApi.Tests.Services
                 Status = "active",
                 Player1Score = 5,
                 Player2Score = 5,
-                Rules = rules,
+                Rules = rules.ToList(),
             };
         }
 

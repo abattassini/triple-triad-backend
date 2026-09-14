@@ -46,6 +46,20 @@ Accept: {{accept}}
 
 ###
 
+### Create Match with "None" -> 400
+# There is no "none" rule: an empty rules array (or omitting the field) means no rules at all.
+POST {{baseUrl}}{{apiPath}}/match
+Content-Type: {{contentType}}
+Accept: {{accept}}
+{{authHeader}}
+
+{
+  "opponentId": null,
+  "rules": ["None"]
+}
+
+###
+
 ### Inspect the rules enabled on a match
 GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}
 Accept: {{accept}}

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using TripleTriadApi.Models;
 
 namespace TripleTriadApi.Data
@@ -81,9 +82,22 @@ namespace TripleTriadApi.Data
                 entity.Property(e => e.Status).IsRequired().HasMaxLength(20);
                 entity.Property(e => e.WinnerId).HasMaxLength(100);
 
-                // Rules are stored as an integer bitmask (0 = no rules), so matches created
-                // before the rules feature behave exactly as before.
-                entity.Property(e => e.Rules).HasDefaultValue(MatchRule.None);
+                // A rule is enabled when it is present in the match's rules list. The list is
+                // stored as a comma separated column of rule names ("" = no rules), which keeps
+                // the schema stable no matter how many rules are added later.
+                entity
+                    .Property(e => e.Rules)
+                    .HasConversion(
+                        rules => rules.ToStorageString(),
+                        value => MatchRuleExtensions.ParseStorageString(value),
+                        new ValueComparer<List<MatchRule>>(
+                            (left, right) => left!.SequenceEqual(right!),
+                            rules => rules.Aggregate(0, (hash, rule) => HashCode.Combine(hash, rule)),
+                            rules => rules.ToList()
+                        )
+                    )
+                    .HasColumnType("text")
+                    .HasDefaultValue(new List<MatchRule>());
 
                 entity.HasIndex(e => new { e.Player1Id, e.Player2Id });
                 entity.HasIndex(e => e.Status);

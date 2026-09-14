@@ -13,9 +13,9 @@ namespace TripleTriadApi.Models
         public int Player1Score { get; set; }
         public int Player2Score { get; set; }
 
-        // Optional rules enabled for this match (bitmask). Defaults to none so every match
-        // created before rules existed keeps the original behaviour.
-        public MatchRule Rules { get; set; } = MatchRule.None;
+        // Rules enabled for this match. A rule is active when it appears in this list; an empty
+        // list means the match is played with the basic rules only.
+        public List<MatchRule> Rules { get; set; } = [];
 
         // Navigation properties
         public virtual ICollection<CardPlacement> CardPlacements { get; set; } =

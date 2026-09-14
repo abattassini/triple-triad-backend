@@ -2,36 +2,36 @@ namespace TripleTriadApi.Models
 {
     public static class MatchRuleExtensions
     {
-        /// <summary>
-        /// Names of every rule the game supports (never includes <see cref="MatchRule.None"/>).
-        /// </summary>
+        // Rules are stored as a comma separated list of names; rule names never contain commas.
+        private const char StorageSeparator = ',';
+
+        /// <summary>Names of every rule the game supports.</summary>
         public static string[] SupportedRuleNames()
         {
-            return Enum.GetValues<MatchRule>()
-                .Where(rule => rule != MatchRule.None)
-                .Select(rule => rule.ToString())
-                .ToArray();
+            return Enum.GetNames<MatchRule>();
         }
 
         /// <summary>
-        /// Rule names contained in the bitmask, ignoring <see cref="MatchRule.None"/>.
-        /// This is the shape used on the wire (e.g. <c>["Same"]</c>).
+        /// Rule names for the wire (e.g. <c>["Same"]</c>): the enabled rules, deduplicated and in
+        /// enum declaration order.
         /// </summary>
-        public static string[] ToNames(this MatchRule rules)
+        public static string[] ToNames(this IEnumerable<MatchRule> rules)
         {
+            var enabled = rules.Distinct().ToList();
+
             return SupportedRuleNames()
-                .Where(name => rules.HasFlag(Enum.Parse<MatchRule>(name)))
+                .Where(name => enabled.Contains(Enum.Parse<MatchRule>(name)))
                 .ToArray();
         }
 
         /// <summary>
-        /// Parses a list of rule names (case-insensitive) into a bitmask.
-        /// Returns false when any name is unknown or maps to <see cref="MatchRule.None"/>.
-        /// A null list means "no rules".
+        /// Parses a list of rule names (case-insensitive) into the list of enabled rules.
+        /// A null list means "no rules"; any blank or unknown name makes the whole list invalid so
+        /// typos never silently create a match with the wrong rules.
         /// </summary>
-        public static bool TryParseAll(IEnumerable<string>? names, out MatchRule rules)
+        public static bool TryParseAll(IEnumerable<string>? names, out List<MatchRule> rules)
         {
-            rules = MatchRule.None;
+            rules = [];
 
             if (names is null)
             {
@@ -40,24 +40,78 @@ namespace TripleTriadApi.Models
 
             foreach (var name in names)
             {
-                // Blank entries are ignored so an empty array (or [""]) means "no rules".
-                if (string.IsNullOrWhiteSpace(name))
+                var parsed = FindByName(name);
+                if (parsed is null)
                 {
-                    continue;
-                }
-
-                if (
-                    !Enum.TryParse<MatchRule>(name, ignoreCase: true, out var parsed)
-                    || parsed == MatchRule.None
-                )
-                {
+                    rules = [];
                     return false;
                 }
 
-                rules |= parsed;
+                if (!rules.Contains(parsed.Value))
+                {
+                    rules.Add(parsed.Value);
+                }
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Serializes the enabled rules for the match's database column (comma separated names;
+        /// an empty string when no rule is enabled).
+        /// </summary>
+        public static string ToStorageString(this IEnumerable<MatchRule> rules)
+        {
+            return string.Join(StorageSeparator, rules.Distinct().Select(rule => rule.ToString()));
+        }
+
+        /// <summary>
+        /// Parses the match's database column value. Blank entries and names that no longer exist
+        /// (e.g. a rule removed in a later version) are skipped so old rows never break the app.
+        /// </summary>
+        public static List<MatchRule> ParseStorageString(string? value)
+        {
+            var rules = new List<MatchRule>();
+
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return rules;
+            }
+
+            foreach (var name in value.Split(StorageSeparator, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var parsed = FindByName(name);
+                if (parsed is not null && !rules.Contains(parsed.Value))
+                {
+                    rules.Add(parsed.Value);
+                }
+            }
+
+            return rules;
+        }
+
+        /// <summary>
+        /// Matches a name against the supported rules (case-insensitive, exact); returns null when
+        /// it is not a known rule.
+        /// </summary>
+        private static MatchRule? FindByName(string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return null;
+            }
+
+            var trimmed = name.Trim();
+
+            foreach (var ruleName in SupportedRuleNames())
+            {
+                if (string.Equals(ruleName, trimmed, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Enum.Parse<MatchRule>(ruleName);
+                }
+            }
+
+            return null;
         }
     }
 }
