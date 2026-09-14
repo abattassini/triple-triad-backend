@@ -10,7 +10,7 @@ namespace TripleTriadApi.Repositories
         Task<Card?> GetCardByIdAsync(int cardId);
         Task<Match?> GetMatchByIdAsync(int matchId);
         Task<Match?> GetActiveMatchForPlayerAsync(string playerId);
-        Task<Match> CreateMatchAsync(string player1Id, string? player2Id);
+        Task<Match> CreateMatchAsync(string player1Id, string? player2Id, MatchRule rules);
         Task<Match> UpdateMatchAsync(Match match);
         Task UpdatePlayerHandAsync(PlayerHand playerHand);
         Task<List<CardPlacement>> GetCardPlacementsAsync(int matchId);
@@ -64,7 +64,7 @@ namespace TripleTriadApi.Repositories
                 );
         }
 
-        public async Task<Match> CreateMatchAsync(string player1Id, string? player2Id)
+        public async Task<Match> CreateMatchAsync(string player1Id, string? player2Id, MatchRule rules)
         {
             var match = new Match
             {
@@ -76,6 +76,7 @@ namespace TripleTriadApi.Repositories
                     : (player2Id == "AI" ? "active" : "active"),
                 Player1Score = 5, // Both players start with 5 points (their 5 cards)
                 Player2Score = 5,
+                Rules = rules, // Rules chosen by the player who creates the match
                 CreatedAt = DateTime.UtcNow,
             };
 

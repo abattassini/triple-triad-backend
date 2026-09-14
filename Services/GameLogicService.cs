@@ -13,6 +13,11 @@ namespace TripleTriadApi.Services
             public int Player2Score { get; set; }
             public bool IsGameComplete { get; set; }
             public string? WinnerId { get; set; }
+
+            /// <summary>
+            /// Special rules that fired while resolving this move (bitmask; empty when none did).
+            /// </summary>
+            public MatchRule TriggeredRules { get; set; } = MatchRule.None;
         }
 
         public PlayCardResult PlayCard(
@@ -38,7 +43,7 @@ namespace TripleTriadApi.Services
             var allPlacements = BuildPlacementsList(currentPlacements, newPlacement);
 
             // Step 4: Calculate captures and update ownership
-            var capturedCards = ProcessCaptures(card, x, y, playerId, allPlacements);
+            var captureResolution = ProcessCaptures(match, card, x, y, playerId, allPlacements);
 
             // Step 5: Calculate final scores
             var (player1Score, player2Score) = CalculatePlayerScores(
@@ -49,7 +54,7 @@ namespace TripleTriadApi.Services
 
             // Step 6: Build and return result
             return BuildPlayCardResult(
-                capturedCards,
+                captureResolution,
                 player1Score,
                 player2Score,
                 allPlacements.Count,
@@ -119,10 +124,17 @@ namespace TripleTriadApi.Services
             return allPlacements;
         }
 
+        /// <summary>Number of tied collisions required to trigger the SAME rule.</summary>
+        private const int SameMinimumTies = 2;
+
         /// <summary>
-        /// Processes card captures and updates ownership
+        /// Resolves all captures for the played card in phases: basic battles first, then the special
+        /// rules enabled on the match. Ownership is flipped as cards are captured (see
+        /// <see cref="CaptureResolution.TryAdd"/>) so later phases see the updated board and future
+        /// rules such as COMBO can chain from the cards a rule captured.
         /// </summary>
-        private List<CardPlacement> ProcessCaptures(
+        private CaptureResolution ProcessCaptures(
+            Match match,
             Card playedCard,
             int x,
             int y,
@@ -130,15 +142,75 @@ namespace TripleTriadApi.Services
             List<CardPlacement> allPlacements
         )
         {
-            var capturedCards = CalculateCaptures(playedCard, x, y, playerId, allPlacements);
+            var resolution = new CaptureResolution();
+            var collisions = GetCollisions(playedCard, x, y, playerId, allPlacements);
 
-            // Update ownership of captured cards
-            foreach (var capture in capturedCards)
+            // Phase 1 - Basic battle: a higher attack value captures the opponent's card.
+            foreach (var collision in collisions)
             {
-                capture.Owner = playerId;
+                if (collision.AttackValue > collision.DefenseValue)
+                {
+                    resolution.TryAdd(collision.Placement, playerId, isRuleCapture: false);
+                }
             }
 
-            return capturedCards;
+            // Phase 2 - Special rules (SAME today; Plus / SameWall / COMBO plug in here later).
+            EvaluateRuleCaptures(match.Rules, collisions, playerId, resolution);
+
+            return resolution;
+        }
+
+        /// <summary>
+        /// One neighbor touched by the played card: the neighbor placement plus the attacking value of
+        /// the played card and the defending value of the neighbor on the touching sides.
+        /// </summary>
+        private sealed record Collision(CardPlacement Placement, int AttackValue, int DefenseValue);
+
+        /// <summary>
+        /// Collects one collision per in-bounds position occupied by an opponent card. This is the
+        /// "neighbor" notion of the game: only cards owned by the opponent can be captured.
+        /// </summary>
+        private static List<Collision> GetCollisions(
+            Card playedCard,
+            int x,
+            int y,
+            string playerId,
+            List<CardPlacement> allPlacements
+        )
+        {
+            var collisions = new List<Collision>();
+
+            foreach (var direction in GetBattleDirections(playedCard))
+            {
+                int neighborX = x + direction.Dx;
+                int neighborY = y + direction.Dy;
+
+                // Skip if out of bounds
+                if (!IsPositionInBounds(neighborX, neighborY))
+                {
+                    continue;
+                }
+
+                // Only cards owned by the opponent can be captured
+                var neighborPlacement = allPlacements.FirstOrDefault(p =>
+                    p.X == neighborX && p.Y == neighborY && p.Owner != playerId
+                );
+
+                if (neighborPlacement?.Card is null)
+                {
+                    continue;
+                }
+
+                collisions.Add(
+                    new Collision(
+                        neighborPlacement,
+                        direction.CardValue,
+                        GetCardValueBySide(neighborPlacement.Card, direction.OpponentSide)
+                    )
+                );
+            }
+
+            return collisions;
         }
 
         /// <summary>
@@ -164,7 +236,7 @@ namespace TripleTriadApi.Services
         /// Builds the final PlayCardResult with all calculated data
         /// </summary>
         private static PlayCardResult BuildPlayCardResult(
-            List<CardPlacement> capturedCards,
+            CaptureResolution captureResolution,
             int player1Score,
             int player2Score,
             int totalPlacements,
@@ -183,11 +255,12 @@ namespace TripleTriadApi.Services
             return new PlayCardResult
             {
                 IsValid = true,
-                CapturedCards = capturedCards,
+                CapturedCards = captureResolution.CapturedCards.ToList(),
                 Player1Score = player1Score,
                 Player2Score = player2Score,
                 IsGameComplete = isGameComplete,
                 WinnerId = winnerId,
+                TriggeredRules = captureResolution.TriggeredRules,
             };
         }
 
@@ -218,93 +291,76 @@ namespace TripleTriadApi.Services
         }
 
         /// <summary>
-        /// Calculates which opponent cards are captured by the played card
+        /// Evaluates every special rule enabled on the match, adding its captures to the resolution.
+        /// This is the extension point for future rules (Plus, SameWall, COMBO).
         /// </summary>
-        private List<CardPlacement> CalculateCaptures(
-            Card playedCard,
-            int x,
-            int y,
+        private static void EvaluateRuleCaptures(
+            MatchRule rules,
+            List<Collision> collisions,
             string playerId,
-            List<CardPlacement> allPlacements
+            CaptureResolution resolution
         )
         {
-            var captures = new List<CardPlacement>();
-            var directions = GetBattleDirections(playedCard);
-
-            foreach (var direction in directions)
+            if (rules.HasFlag(MatchRule.Same))
             {
-                int neighborX = x + direction.dx;
-                int neighborY = y + direction.dy;
-
-                // Skip if out of bounds
-                if (!IsPositionInBounds(neighborX, neighborY))
-                {
-                    continue;
-                }
-
-                // Try to capture the neighbor card
-                var capturedCard = TryCaptureNeighbor(
-                    neighborX,
-                    neighborY,
-                    direction.cardValue,
-                    direction.opponentSide,
-                    playerId,
-                    allPlacements
-                );
-
-                if (capturedCard is not null)
-                {
-                    captures.Add(capturedCard);
-                }
+                EvaluateSameRule(collisions, playerId, resolution);
             }
 
-            return captures;
+            // FUTURE: Plus (two collisions with the same attack + defense sum), SameWall (board
+            // edges count as A) and COMBO (chain the cards in resolution.RuleCapturedCards) are
+            // evaluated here, each adding its captures through resolution.TryAdd(..., true).
         }
+
+        /// <summary>
+        /// SAME: when two or more collisions tie (attack == defense), the tied neighbor cards are
+        /// captured by the player who played the card. A single tie captures nothing.
+        /// </summary>
+        private static void EvaluateSameRule(
+            List<Collision> collisions,
+            string playerId,
+            CaptureResolution resolution
+        )
+        {
+            var tiedCollisions = collisions
+                .Where(collision => collision.AttackValue == collision.DefenseValue)
+                .ToList();
+
+            if (tiedCollisions.Count < SameMinimumTies)
+            {
+                return;
+            }
+
+            foreach (var collision in tiedCollisions)
+            {
+                resolution.TryAdd(collision.Placement, playerId, isRuleCapture: true);
+            }
+
+            resolution.MarkRuleTriggered(MatchRule.Same);
+        }
+
+        /// <summary>
+        /// A battle direction: the board offset, the played card's value on that side and the
+        /// neighbor side it is compared against.
+        /// </summary>
+        private readonly record struct BattleDirection(
+            int Dx,
+            int Dy,
+            int CardValue,
+            string OpponentSide
+        );
 
         /// <summary>
         /// Defines the four battle directions (top, right, bottom, left) with card values
         /// </summary>
-        private static dynamic[] GetBattleDirections(Card playedCard)
+        private static BattleDirection[] GetBattleDirections(Card playedCard)
         {
-            return new[]
-            {
-                new
-                {
-                    dx = 0,
-                    dy = -1,
-                    cardValue = playedCard.TopValue,
-                    opponentSide = "BottomValue",
-                }, // Top
-                new
-                {
-                    dx = 1,
-                    dy = 0,
-                    cardValue = playedCard.RightValue,
-                    opponentSide = "LeftValue",
-                }, // Right
-                new
-                {
-                    dx = 0,
-                    dy = 1,
-                    cardValue = playedCard.BottomValue,
-                    opponentSide = "TopValue",
-                }, // Bottom
-                new
-                {
-                    dx = -1,
-                    dy = 0,
-                    cardValue = playedCard.LeftValue,
-                    opponentSide = "RightValue",
-                }, // Left
-            };
-        }
-
-        /// <summary>
-        /// Calculates the neighbor position based on direction deltas
-        /// </summary>
-        private static (int x, int y) CalculateNeighborPosition(int x, int y, int dx, int dy)
-        {
-            return (x + dx, y + dy);
+            return
+            [
+                new BattleDirection(0, -1, playedCard.TopValue, "BottomValue"), // Top
+                new BattleDirection(1, 0, playedCard.RightValue, "LeftValue"), // Right
+                new BattleDirection(0, 1, playedCard.BottomValue, "TopValue"), // Bottom
+                new BattleDirection(-1, 0, playedCard.LeftValue, "RightValue"), // Left
+            ];
         }
 
         /// <summary>
@@ -313,39 +369,6 @@ namespace TripleTriadApi.Services
         private static bool IsPositionInBounds(int x, int y)
         {
             return x >= 0 && x <= 2 && y >= 0 && y <= 2;
-        }
-
-        /// <summary>
-        /// Attempts to capture a neighbor card if the battle value wins
-        /// </summary>
-        private static CardPlacement? TryCaptureNeighbor(
-            int neighborX,
-            int neighborY,
-            int attackValue,
-            string opponentSide,
-            string playerId,
-            List<CardPlacement> allPlacements
-        )
-        {
-            // Find the card at the neighbor position (must be opponent's)
-            CardPlacement? neighborPlacement = allPlacements.FirstOrDefault(p =>
-                p.X == neighborX && p.Y == neighborY && p.Owner != playerId
-            );
-
-            if (neighborPlacement?.Card is null)
-            {
-                return null;
-            }
-
-            int defenseValue = GetCardValueBySide(neighborPlacement.Card, opponentSide);
-
-            // Battle: attack > defense = capture
-            if (attackValue > defenseValue)
-            {
-                return neighborPlacement;
-            }
-
-            return null;
         }
 
         private static int GetCardValueBySide(Card card, string side)

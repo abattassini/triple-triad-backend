@@ -1,0 +1,68 @@
+# Environment Variables
+@baseUrl = http://localhost:5041
+@apiPath = /api/game
+@contentType = application/json
+@accept = application/json
+
+### Create Match with the SAME rule
+# Rules are optional. The rules chosen by the creator are inherited by whoever joins the
+# waiting match and are returned by GET /match/{id}, GET /matches/waiting and the SignalR
+# MatchJoined/MatchStatus payloads as `rules: ["Same"]`.
+POST {{baseUrl}}{{apiPath}}/match
+Content-Type: {{contentType}}
+Accept: {{accept}}
+{{authHeader}}
+
+{
+  "opponentId": null,
+  "rules": ["Same"]
+}
+
+###
+
+### Create Match without rules (baseline behaviour)
+# No rules enabled: ties in a collision never capture anything.
+POST {{baseUrl}}{{apiPath}}/match
+Content-Type: {{contentType}}
+Accept: {{accept}}
+{{authHeader}}
+
+{
+  "opponentId": null
+}
+
+###
+
+### Create Match with an unknown rule -> 400
+POST {{baseUrl}}{{apiPath}}/match
+Content-Type: {{contentType}}
+Accept: {{accept}}
+{{authHeader}}
+
+{
+  "opponentId": null,
+  "rules": ["Plus"]
+}
+
+###
+
+### Inspect the rules enabled on a match
+GET {{baseUrl}}{{apiPath}}/match/{{testMatchId}}
+Accept: {{accept}}
+{{authHeader}}
+
+###
+
+### Play a card (response carries `triggeredRules`, e.g. ["Same"] when the rule fired)
+POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/play
+Content-Type: {{contentType}}
+Accept: {{accept}}
+{{authHeader}}
+
+{
+  "cardId": {{testCardId}},
+  "x": 1,
+  "y": 1
+}
+
+###

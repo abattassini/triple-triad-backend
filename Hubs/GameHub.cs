@@ -40,6 +40,7 @@ namespace TripleTriadApi.Hubs
                             currentPlayer = match.CurrentPlayerTurn,
                             player1Score = match.Player1Score,
                             player2Score = match.Player2Score,
+                            rules = match.Rules.ToNames(),
                         }
                     );
             }
@@ -95,6 +96,7 @@ namespace TripleTriadApi.Hubs
                             y = c.Y,
                             newOwner = playerId,
                         }),
+                        triggeredRules = result.GameResult.TriggeredRules.ToNames(),
                         player1Score = result.GameResult.Player1Score,
                         player2Score = result.GameResult.Player2Score,
                         currentPlayer = result.UpdatedMatch!.CurrentPlayerTurn,
@@ -152,6 +154,7 @@ namespace TripleTriadApi.Hubs
                             match.Player1Score,
                             match.Player2Score,
                             match.WinnerId,
+                            rules = match.Rules.ToNames(),
                         },
                         placements = placements.Select(p => new
                         {

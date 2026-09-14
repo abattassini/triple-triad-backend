@@ -81,6 +81,10 @@ namespace TripleTriadApi.Data
                 entity.Property(e => e.Status).IsRequired().HasMaxLength(20);
                 entity.Property(e => e.WinnerId).HasMaxLength(100);
 
+                // Rules are stored as an integer bitmask (0 = no rules), so matches created
+                // before the rules feature behave exactly as before.
+                entity.Property(e => e.Rules).HasDefaultValue(MatchRule.None);
+
                 entity.HasIndex(e => new { e.Player1Id, e.Player2Id });
                 entity.HasIndex(e => e.Status);
             });

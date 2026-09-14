@@ -62,11 +62,25 @@ namespace TripleTriadApi.Controllers
                     return BadRequest(new { error = "Player already has an active match" });
                 }
 
+                // Rules are optional; unknown names are rejected so a typo never silently creates a
+                // match with different rules than the client asked for.
+                if (!MatchRuleExtensions.TryParseAll(request.Rules, out var rules))
+                {
+                    return BadRequest(
+                        new
+                        {
+                            error =
+                                "Unknown rule. Supported rules: "
+                                + string.Join(", ", MatchRuleExtensions.SupportedRuleNames()),
+                        }
+                    );
+                }
+
                 // Determine opponent: null = waiting for PvP, "AI" = vs AI
                 string? opponent = request.OpponentId;
 
-                // Create new match
-                var match = await _gameRepository.CreateMatchAsync(playerId, opponent);
+                // Create new match with the requested rules
+                var match = await _gameRepository.CreateMatchAsync(playerId, opponent, rules);
 
                 // Get all available cards and create random hands
                 var allCards = await _gameRepository.GetAllCardsAsync();
@@ -99,6 +113,7 @@ namespace TripleTriadApi.Controllers
                             match.Status,
                             match.Player1Score,
                             match.Player2Score,
+                            rules = match.Rules.ToNames(),
                         },
                         playerHand = playerHand
                             .Where(ph => !ph.IsUsed)
@@ -151,6 +166,7 @@ namespace TripleTriadApi.Controllers
                         match.WinnerId,
                         match.CreatedAt,
                         match.CompletedAt,
+                        rules = match.Rules.ToNames(),
                     },
                     placements = placements.Select(p => new
                     {
@@ -242,6 +258,7 @@ namespace TripleTriadApi.Controllers
                         c.X,
                         c.Y,
                     }),
+                    triggeredRules = result.GameResult!.TriggeredRules.ToNames(),
                     player1Score = result.GameResult.Player1Score,
                     player2Score = result.GameResult.Player2Score,
                     currentPlayer = result.UpdatedMatch!.CurrentPlayerTurn,
@@ -272,6 +289,7 @@ namespace TripleTriadApi.Controllers
                     m.Id,
                     m.Player1Id,
                     m.CreatedAt,
+                    rules = m.Rules.ToNames(),
                 })
                 .ToList();
 
@@ -336,6 +354,7 @@ namespace TripleTriadApi.Controllers
                             match.Player2Id,
                             match.CurrentPlayerTurn,
                             match.Status,
+                            rules = match.Rules.ToNames(),
                         },
                         playerHand = playerHand
                             .Where(ph => !ph.IsUsed)
@@ -365,6 +384,11 @@ namespace TripleTriadApi.Controllers
     public class CreateMatchRequest
     {
         public string? OpponentId { get; set; }
+
+        /// <summary>
+        /// Optional rules to enable for the match (e.g. <c>["Same"]</c>). Unknown names are rejected.
+        /// </summary>
+        public string[]? Rules { get; set; }
     }
 
     public class PlayCardRequest
