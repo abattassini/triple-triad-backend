@@ -132,6 +132,9 @@ namespace TripleTriadApi.Services
         /// rules enabled on the match. Ownership is flipped as cards are captured (see
         /// <see cref="CaptureResolution.TryAdd"/>) so later phases see the updated board and future
         /// rules such as COMBO can chain from the cards a rule captured.
+        ///
+        /// Every phase sees every collision, own cards included; each phase decides what it may flip
+        /// (ownership decides capturability, not whether two cards collide).
         /// </summary>
         private CaptureResolution ProcessCaptures(
             Match match,
@@ -143,12 +146,12 @@ namespace TripleTriadApi.Services
         )
         {
             var resolution = new CaptureResolution();
-            var collisions = GetCollisions(playedCard, x, y, playerId, allPlacements);
+            var collisions = GetCollisions(playedCard, x, y, allPlacements);
 
-            // Phase 1 - Basic battle: a higher attack value captures the opponent's card.
+            // Phase 1 - Basic battle: only an opponent's card can be captured, and only on a strict win.
             foreach (var collision in collisions)
             {
-                if (collision.AttackValue > collision.DefenseValue)
+                if (collision.IsOpponentCardOf(playerId) && collision.IsStrictWin)
                 {
                     resolution.TryAdd(collision.Placement, playerId, isRuleCapture: false);
                 }
@@ -161,20 +164,33 @@ namespace TripleTriadApi.Services
         }
 
         /// <summary>
-        /// One neighbor touched by the played card: the neighbor placement plus the attacking value of
-        /// the played card and the defending value of the neighbor on the touching sides.
+        /// One neighbour touched by the played card: the neighbour placement plus the attacking value
+        /// of the played card and the defending value of the neighbour on the touching sides. A
+        /// collision exists for every occupied neighbour, whoever owns it — ownership decides what can
+        /// be captured, not whether the two cards collide.
         /// </summary>
-        private sealed record Collision(CardPlacement Placement, int AttackValue, int DefenseValue);
+        private sealed record Collision(CardPlacement Placement, int AttackValue, int DefenseValue)
+        {
+            /// <summary>Only the opponent's cards can ever be captured.</summary>
+            public bool IsOpponentCardOf(string playerId) => Placement.Owner != playerId;
+
+            /// <summary>Equal touching values — what the SAME rule looks for.</summary>
+            public bool IsTie => AttackValue == DefenseValue;
+
+            /// <summary>Higher attack than defense — a basic battle capture.</summary>
+            public bool IsStrictWin => AttackValue > DefenseValue;
+        }
 
         /// <summary>
-        /// Collects one collision per in-bounds position occupied by an opponent card. This is the
-        /// "neighbor" notion of the game: only cards owned by the opponent can be captured.
+        /// Collects one collision per in-bounds position occupied by a card, whoever owns it. Own cards
+        /// are included because the SAME rule counts a tie with one of them toward its two-or-more
+        /// requirement; callers that need capture candidates filter with
+        /// <see cref="Collision.IsOpponentCardOf"/>.
         /// </summary>
         private static List<Collision> GetCollisions(
             Card playedCard,
             int x,
             int y,
-            string playerId,
             List<CardPlacement> allPlacements
         )
         {
@@ -191,9 +207,8 @@ namespace TripleTriadApi.Services
                     continue;
                 }
 
-                // Only cards owned by the opponent can be captured
                 var neighborPlacement = allPlacements.FirstOrDefault(p =>
-                    p.X == neighborX && p.Y == neighborY && p.Owner != playerId
+                    p.X == neighborX && p.Y == neighborY
                 );
 
                 if (neighborPlacement?.Card is null)
@@ -292,6 +307,7 @@ namespace TripleTriadApi.Services
 
         /// <summary>
         /// Evaluates every special rule enabled on the match, adding its captures to the resolution.
+        /// Rules receive every collision (own cards included) and decide for themselves what to flip.
         /// This is the extension point for future rules (Plus, SameWall, COMBO).
         /// </summary>
         private static void EvaluateRuleCaptures(
@@ -313,8 +329,11 @@ namespace TripleTriadApi.Services
         }
 
         /// <summary>
-        /// SAME: when two or more collisions tie (attack == defense), the tied neighbor cards are
-        /// captured by the player who played the card. A single tie captures nothing.
+        /// SAME (FF8): when the played card touches two or more cards and the touching values are equal
+        /// in at least two of those collisions, the tied cards flip. Ties with the player's own cards
+        /// count toward the two-or-more but are already the player's, so only the tied opponent cards
+        /// are captured — and at least one tied neighbour has to be the opponent's (FF8's "one or both
+        /// of them have to be the opposite color"). A single tie captures nothing.
         /// </summary>
         private static void EvaluateSameRule(
             List<Collision> collisions,
@@ -322,16 +341,24 @@ namespace TripleTriadApi.Services
             CaptureResolution resolution
         )
         {
-            var tiedCollisions = collisions
-                .Where(collision => collision.AttackValue == collision.DefenseValue)
-                .ToList();
+            var tiedCollisions = collisions.Where(collision => collision.IsTie).ToList();
 
             if (tiedCollisions.Count < SameMinimumTies)
             {
                 return;
             }
 
-            foreach (var collision in tiedCollisions)
+            var tiedOpponentCards = tiedCollisions
+                .Where(collision => collision.IsOpponentCardOf(playerId))
+                .ToList();
+
+            // Own-card ties alone meet the threshold but cannot flip anything.
+            if (tiedOpponentCards.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var collision in tiedOpponentCards)
             {
                 resolution.TryAdd(collision.Placement, playerId, isRuleCapture: true);
             }

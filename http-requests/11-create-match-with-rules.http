@@ -8,6 +8,8 @@
 # Rules are optional. The rules chosen by the creator are inherited by whoever joins the
 # waiting match and are returned by GET /match/{id}, GET /matches/waiting and the SignalR
 # MatchJoined/MatchStatus payloads as `rules: ["Same"]`.
+# With SAME on (FF8 semantics), a tie with one of your own cards counts toward the two-or-more
+# ties the rule needs, but own cards can never be captured — only the tied opponent cards flip.
 POST {{baseUrl}}{{apiPath}}/match
 Content-Type: {{contentType}}
 Accept: {{accept}}

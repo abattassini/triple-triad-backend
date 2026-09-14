@@ -8,10 +8,12 @@ namespace TripleTriadApi.Models
     public enum MatchRule
     {
         /// <summary>
-        /// SAME: when the played card collides with two or more neighbours — the neighbour notion
-        /// used by <c>GameLogicService.GetCollisions</c> — and the touching values are equal
-        /// (attack == defense) in at least two of those collisions, the tied neighbour cards are
-        /// captured by the player who played the card.
+        /// SAME (FF8): when the played card collides with two or more neighbours — the neighbour notion
+        /// used by <c>GameLogicService.GetCollisions</c>, own cards included — and the touching values
+        /// are equal (attack == defense) in at least two of those collisions, the tied cards flip to the
+        /// player who played the card. A tie with one of the player's own cards counts toward the
+        /// two-or-more but is already that player's, so at least one tied neighbour has to belong to the
+        /// opponent.
         /// </summary>
         Same = 1,
 
