@@ -12,8 +12,8 @@ namespace TripleTriadApi.Models
         None = 0,
 
         /// <summary>
-        /// SAME: when the played card collides with two or more neighbours (see
-        /// <c>GameLogicService.TryCaptureNeighbor</c>) and the touching values are equal
+        /// SAME: when the played card collides with two or more neighbours — the neighbour notion
+        /// used by <c>GameLogicService.GetCollisions</c> — and the touching values are equal
         /// (attack == defense) in at least two of those collisions, the tied neighbour cards are
         /// captured by the player who played the card.
         /// </summary>
