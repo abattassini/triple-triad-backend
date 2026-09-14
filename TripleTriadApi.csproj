@@ -19,4 +19,11 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="9.0.9" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The test project lives in a subfolder, so keep its sources out of the web app build. -->
+    <Compile Remove="TripleTriadApi.Tests\**" />
+    <Content Remove="TripleTriadApi.Tests\**" />
+    <EmbeddedResource Remove="TripleTriadApi.Tests\**" />
+    <None Remove="TripleTriadApi.Tests\**" />
+  </ItemGroup>
 </Project>
