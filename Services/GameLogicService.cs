@@ -20,44 +20,57 @@ namespace TripleTriadApi.Services
             public List<MatchRule> TriggeredRules { get; set; } = [];
         }
 
+        /// <summary>
+        /// One play: the actor (the player who played the card), the card, the square it goes to and the
+        /// board as it stood before the card landed. A move is the single input the capture pipeline
+        /// resolves — collisions, basic battle and every enabled special rule hang off it.
+        /// </summary>
+        private sealed record Move(
+            string Actor,
+            Card Card,
+            int X,
+            int Y,
+            List<CardPlacement> Board
+        );
+
         public PlayCardResult PlayCard(
             Match match,
             List<CardPlacement> currentPlacements,
             Card card,
-            string playerId,
+            string actor,
             int x,
             int y
         )
         {
+            // The whole action is one Move: actor + card + square, resolved against the board it lands on.
+            var move = new Move(actor, card, x, y, currentPlacements);
+
             // Step 1: Validate the move
-            var validationResult = ValidateMove(match, currentPlacements, playerId, x, y);
+            var validationResult = ValidateMove(match, move);
             if (!validationResult.IsValid)
             {
                 return validationResult;
             }
 
-            // Step 2: Create the card placement
-            var newPlacement = CreateCardPlacement(match.Id, card, playerId, x, y);
+            // Step 2: Place the card, giving the board the move is resolved and scored against
+            var board = BuildPlacementsList(move.Board, CreateCardPlacement(match.Id, move));
 
-            // Step 3: Calculate all placements (current + new)
-            var allPlacements = BuildPlacementsList(currentPlacements, newPlacement);
+            // Step 3: Resolve the move (collisions, basic battle, enabled rules) and update ownership
+            var captureResolution = ResolveMove(match, move, board);
 
-            // Step 4: Calculate captures and update ownership
-            var captureResolution = ProcessCaptures(match, card, x, y, playerId, allPlacements);
-
-            // Step 5: Calculate final scores
+            // Step 4: Calculate final scores
             var (player1Score, player2Score) = CalculatePlayerScores(
-                allPlacements,
+                board,
                 match.Player1Id,
                 match.Player2Id
             );
 
-            // Step 6: Build and return result
+            // Step 5: Build and return result
             return BuildPlayCardResult(
                 captureResolution,
                 player1Score,
                 player2Score,
-                allPlacements.Count,
+                board.Count,
                 match.Player1Id,
                 match.Player2Id
             );
@@ -66,20 +79,14 @@ namespace TripleTriadApi.Services
         /// <summary>
         /// Validates if the move is legal (position available and correct turn)
         /// </summary>
-        private static PlayCardResult ValidateMove(
-            Match match,
-            List<CardPlacement> placements,
-            string playerId,
-            int x,
-            int y
-        )
+        private static PlayCardResult ValidateMove(Match match, Move move)
         {
-            if (!IsValidMove(placements, x, y))
+            if (!IsValidMove(move.Board, move.X, move.Y))
             {
                 return new PlayCardResult { ErrorMessage = "Position is already occupied" };
             }
 
-            if (match.CurrentPlayerTurn != playerId)
+            if (match.CurrentPlayerTurn != move.Actor)
             {
                 return new PlayCardResult { ErrorMessage = "Not your turn" };
             }
@@ -88,25 +95,19 @@ namespace TripleTriadApi.Services
         }
 
         /// <summary>
-        /// Creates a new card placement at the specified position
+        /// Creates the placement the move adds to the board; the actor owns and has played it
         /// </summary>
-        private static CardPlacement CreateCardPlacement(
-            int matchId,
-            Card card,
-            string playerId,
-            int x,
-            int y
-        )
+        private static CardPlacement CreateCardPlacement(int matchId, Move move)
         {
             return new CardPlacement
             {
                 MatchId = matchId,
-                CardId = card.Id,
-                Card = card,
-                PlayerId = playerId,
-                Owner = playerId,
-                X = x,
-                Y = y,
+                CardId = move.Card.Id,
+                Card = move.Card,
+                PlayerId = move.Actor,
+                Owner = move.Actor,
+                X = move.X,
+                Y = move.Y,
                 PlacedAt = DateTime.UtcNow,
             };
         }
@@ -128,46 +129,43 @@ namespace TripleTriadApi.Services
         private const int SameMinimumTies = 2;
 
         /// <summary>
-        /// Resolves all captures for the played card in phases: basic battles first, then the special
-        /// rules enabled on the match. Ownership is flipped as cards are captured (see
-        /// <see cref="CaptureResolution.TryAdd"/>) so later phases see the updated board and future
-        /// rules such as COMBO can chain from the cards a rule captured.
+        /// Resolves every capture the move causes, in phases: basic battles first, then the special rules
+        /// enabled on the match. Ownership is flipped as cards are captured (see
+        /// <see cref="CaptureResolution.TryAdd"/>) so later phases see the updated board and future rules
+        /// such as COMBO can chain from the cards a rule captured.
         ///
         /// Every phase sees every collision, own cards included; each phase decides what it may flip
         /// (ownership decides capturability, not whether two cards collide).
         /// </summary>
-        private CaptureResolution ProcessCaptures(
+        private static CaptureResolution ResolveMove(
             Match match,
-            Card playedCard,
-            int x,
-            int y,
-            string playerId,
-            List<CardPlacement> allPlacements
+            Move move,
+            List<CardPlacement> board
         )
         {
             var resolution = new CaptureResolution();
-            var collisions = GetCollisions(playedCard, x, y, allPlacements);
+            var collisions = GetCollisions(move, board);
 
             // Phase 1 - Basic battle: only an opponent's card can be captured, and only on a strict win.
             foreach (var collision in collisions)
             {
-                if (collision.IsOpponentCardOf(playerId) && collision.IsStrictWin)
+                if (collision.IsOpponentCardOf(move.Actor) && collision.IsStrictWin)
                 {
-                    resolution.TryAdd(collision.Placement, playerId, isRuleCapture: false);
+                    resolution.TryAdd(collision.Placement, move.Actor, isRuleCapture: false);
                 }
             }
 
             // Phase 2 - Special rules (SAME today; Plus / SameWall / COMBO plug in here later).
-            EvaluateRuleCaptures(match.Rules, collisions, playerId, resolution);
+            EvaluateRuleCaptures(match.Rules, move, collisions, resolution);
 
             return resolution;
         }
 
         /// <summary>
-        /// One neighbour touched by the played card: the neighbour placement plus the attacking value
-        /// of the played card and the defending value of the neighbour on the touching sides. A
-        /// collision exists for every occupied neighbour, whoever owns it — ownership decides what can
-        /// be captured, not whether the two cards collide.
+        /// One neighbour touched by the played card: the neighbour placement, the attacking value of the
+        /// card the move plays and the defending value of the neighbour on the touching sides. A collision
+        /// exists for every occupied neighbour, whoever owns it — ownership decides what can be captured,
+        /// not whether the two cards collide.
         /// </summary>
         private sealed record Collision(CardPlacement Placement, int AttackValue, int DefenseValue)
         {
@@ -182,24 +180,19 @@ namespace TripleTriadApi.Services
         }
 
         /// <summary>
-        /// Collects one collision per in-bounds position occupied by a card, whoever owns it. Own cards
-        /// are included because the SAME rule counts a tie with one of them toward its two-or-more
-        /// requirement; callers that need capture candidates filter with
-        /// <see cref="Collision.IsOpponentCardOf"/>.
+        /// Collects one collision per in-bounds neighbour of the move's square on <paramref name="board"/>
+        /// (the board the move is resolved against), whoever owns that neighbour. Own cards are included
+        /// because the SAME rule counts a tie with one of them toward its two-or-more requirement; callers
+        /// that need capture candidates filter with <see cref="Collision.IsOpponentCardOf"/>.
         /// </summary>
-        private static List<Collision> GetCollisions(
-            Card playedCard,
-            int x,
-            int y,
-            List<CardPlacement> allPlacements
-        )
+        private static List<Collision> GetCollisions(Move move, List<CardPlacement> board)
         {
             var collisions = new List<Collision>();
 
-            foreach (var direction in GetBattleDirections(playedCard))
+            foreach (var direction in GetBattleDirections(move.Card))
             {
-                int neighborX = x + direction.Dx;
-                int neighborY = y + direction.Dy;
+                int neighborX = move.X + direction.Dx;
+                int neighborY = move.Y + direction.Dy;
 
                 // Skip if out of bounds
                 if (!IsPositionInBounds(neighborX, neighborY))
@@ -207,7 +200,7 @@ namespace TripleTriadApi.Services
                     continue;
                 }
 
-                var neighborPlacement = allPlacements.FirstOrDefault(p =>
+                var neighborPlacement = board.FirstOrDefault(p =>
                     p.X == neighborX && p.Y == neighborY
                 );
 
@@ -312,15 +305,15 @@ namespace TripleTriadApi.Services
         /// </summary>
         private static void EvaluateRuleCaptures(
             List<MatchRule> rules,
+            Move move,
             List<Collision> collisions,
-            string playerId,
             CaptureResolution resolution
         )
         {
             // A rule is enabled when it appears in the match's list of rules.
             if (rules.Contains(MatchRule.Same))
             {
-                EvaluateSameRule(collisions, playerId, resolution);
+                EvaluateSameRule(collisions, move, resolution);
             }
 
             // FUTURE: Plus (two collisions with the same attack + defense sum), SameWall (board
@@ -337,7 +330,7 @@ namespace TripleTriadApi.Services
         /// </summary>
         private static void EvaluateSameRule(
             List<Collision> collisions,
-            string playerId,
+            Move move,
             CaptureResolution resolution
         )
         {
@@ -349,7 +342,7 @@ namespace TripleTriadApi.Services
             }
 
             var tiedOpponentCards = tiedCollisions
-                .Where(collision => collision.IsOpponentCardOf(playerId))
+                .Where(collision => collision.IsOpponentCardOf(move.Actor))
                 .ToList();
 
             // Own-card ties alone meet the threshold but cannot flip anything.
@@ -360,7 +353,7 @@ namespace TripleTriadApi.Services
 
             foreach (var collision in tiedOpponentCards)
             {
-                resolution.TryAdd(collision.Placement, playerId, isRuleCapture: true);
+                resolution.TryAdd(collision.Placement, move.Actor, isRuleCapture: true);
             }
 
             resolution.MarkRuleTriggered(MatchRule.Same);

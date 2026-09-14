@@ -29,18 +29,18 @@ namespace TripleTriadApi.Services
         public IReadOnlyList<MatchRule> TriggeredRules => _triggeredRules;
 
         /// <summary>
-        /// Registers a captured card and flips its ownership to the player who moved. Ownership is
-        /// updated here (rather than after resolution) so later phases see the updated board.
+        /// Registers a captured card and flips its ownership to the move's actor. Ownership is updated
+        /// here (rather than after resolution) so later phases see the updated board.
         /// Returns false when the placement was already captured by a previous phase.
         /// </summary>
-        public bool TryAdd(CardPlacement placement, string playerId, bool isRuleCapture)
+        public bool TryAdd(CardPlacement placement, string actor, bool isRuleCapture)
         {
             if (!_capturedPositions.Add((placement.X, placement.Y)))
             {
                 return false;
             }
 
-            placement.Owner = playerId;
+            placement.Owner = actor;
             _capturedCards.Add(placement);
 
             if (isRuleCapture)
