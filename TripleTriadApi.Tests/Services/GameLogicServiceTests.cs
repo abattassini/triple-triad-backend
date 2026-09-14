@@ -153,21 +153,60 @@ namespace TripleTriadApi.Tests.Services
         }
 
         [Fact]
-        public void PlayCard_TieWithOwnCard_IsNotACollision()
+        public void PlayCard_OwnCardTie_CountsTowardSame_AndOnlyTheOpponentCardFlips()
         {
-            // Documented simplification: collisions are opponent cards only, so a tie with one of
-            // the player's own cards cannot be one of the two collisions SAME needs.
+            // FF8 SAME: a tie with one of the player's own cards counts toward the "two or more", but an
+            // own card is already the player's, so only the opponent's tied card is captured.
             var match = CreateMatch(MatchRule.Same);
             var playedCard = CreateCard(1, top: 5, right: 5, bottom: 1, left: 1);
-            var ownCard = CreatePlacement(CreateCard(2, 1, 1, 5, 1), Player1, 1, 0);
-            var opponentCard = CreatePlacement(CreateCard(3, 1, 1, 1, 5), Player2, 2, 1);
+            var ownCard = CreatePlacement(CreateCard(2, 1, 1, 5, 1), Player1, 1, 0); // tie: played.Top vs bottom
+            var opponentCard = CreatePlacement(CreateCard(3, 1, 1, 1, 5), Player2, 2, 1); // tie: played.Right vs left
             var placements = new List<CardPlacement> { ownCard, opponentCard };
 
             var result = GameLogic.PlayCard(match, placements, playedCard, Player1, 1, 1);
 
-            Assert.Empty(result.CapturedCards);
+            Assert.Single(result.CapturedCards);
+            Assert.Same(opponentCard, result.CapturedCards[0]);
+            Assert.Equal(Player1, opponentCard.Owner);
+            Assert.DoesNotContain(ownCard, result.CapturedCards);
             Assert.Equal(Player1, ownCard.Owner);
-            Assert.Equal(Player2, opponentCard.Owner);
+            Assert.Equal(new[] { MatchRule.Same }, result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_OwnCardTiesOnly_DoNotTriggerSame()
+        {
+            // Two own-card ties meet the two-or-more requirement, but there is no tied opponent card to
+            // capture (FF8: "one or both of them have to be the opposite color"), so nothing fires.
+            var match = CreateMatch(MatchRule.Same);
+            var playedCard = CreateCard(1, top: 5, right: 5, bottom: 1, left: 1);
+            var firstOwnCard = CreatePlacement(CreateCard(2, 1, 1, 5, 1), Player1, 1, 0); // tie
+            var secondOwnCard = CreatePlacement(CreateCard(3, 1, 1, 1, 5), Player1, 2, 1); // tie
+            var placements = new List<CardPlacement> { firstOwnCard, secondOwnCard };
+
+            var result = GameLogic.PlayCard(match, placements, playedCard, Player1, 1, 1);
+
+            Assert.Empty(result.CapturedCards);
+            Assert.Equal(Player1, firstOwnCard.Owner);
+            Assert.Equal(Player1, secondOwnCard.Owner);
+            Assert.Empty(result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_OwnCard_IsNeverCaptured_EvenOnAStrictWin()
+        {
+            // Own cards are collisions now, but they are never reported as captured.
+            var match = CreateMatch(MatchRule.Same);
+            var playedCard = CreateCard(1, 9, 9, 1, 1);
+            var ownCard = CreatePlacement(CreateCard(2, 1, 1, 1, 1), Player1, 1, 0); // 9 > 1, but own
+            var opponentCard = CreatePlacement(CreateCard(3, 1, 1, 1, 1), Player2, 2, 1); // 9 > 1, capturable
+            var placements = new List<CardPlacement> { ownCard, opponentCard };
+
+            var result = GameLogic.PlayCard(match, placements, playedCard, Player1, 1, 1);
+
+            Assert.Single(result.CapturedCards);
+            Assert.Same(opponentCard, result.CapturedCards[0]);
+            Assert.Equal(Player1, ownCard.Owner);
             Assert.Empty(result.TriggeredRules);
         }
 
@@ -219,7 +258,10 @@ namespace TripleTriadApi.Tests.Services
             Assert.Equal(9, result.Player1Score);
             Assert.Equal(1, result.Player2Score);
         }
-        private static GameLogicService.PlayCardResult PlayFourNeighborBoard(params MatchRule[] rules)
+
+        private static GameLogicService.PlayCardResult PlayFourNeighborBoard(
+            params MatchRule[] rules
+        )
         {
             var match = CreateMatch(rules);
             var playedCard = CreateCard(1, 9, 9, 9, 9);
