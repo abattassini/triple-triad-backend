@@ -211,6 +211,250 @@ namespace TripleTriadApi.Tests.Services
         }
 
         [Fact]
+        public void PlayCard_Plus_TwoMatchingSums_FlipsBothNeighbours_WithoutSame()
+        {
+            // 5 + 6 and 4 + 7 both make 11. Neither collision ties or wins on rank, so basic battle and
+            // SAME stay out of it and PLUS alone flips both neighbours — each of which beats the played
+            // card on its touching side.
+            var playedCard = CreateCard(1, 5, 4, 1, 1);
+            var topNeighbour = CreatePlacement(TopNeighbourCard(2, bottom: 6), Player2, 1, 0);
+            var rightNeighbour = CreatePlacement(RightNeighbourCard(3, left: 7), Player2, 2, 1);
+
+            var (result, neighbours) = PlayCenter(
+                playedCard,
+                [topNeighbour, rightNeighbour],
+                MatchRule.Plus
+            );
+
+            Assert.Equal(2, result.CapturedCards.Count);
+            Assert.All(neighbours, neighbour => Assert.Equal(Player1, neighbour.Owner));
+            Assert.Equal(new[] { MatchRule.Plus }, result.TriggeredRules);
+            Assert.All(
+                neighbours,
+                neighbour => Assert.Equal(MatchRule.Plus, CaptureCauseOf(result, neighbour)!.Rule)
+            );
+        }
+
+        [Fact]
+        public void PlayCard_Plus_ThreeMatchingSums_FlipAllThree()
+        {
+            // 5 + 6, 4 + 7 and 3 + 8 all make 11.
+            var playedCard = CreateCard(1, 5, 4, 3, 1);
+            var topNeighbour = CreatePlacement(TopNeighbourCard(2, bottom: 6), Player2, 1, 0);
+            var rightNeighbour = CreatePlacement(RightNeighbourCard(3, left: 7), Player2, 2, 1);
+            var bottomNeighbour = CreatePlacement(BottomNeighbourCard(4, top: 8), Player2, 1, 2);
+
+            var (result, neighbours) = PlayCenter(
+                playedCard,
+                [topNeighbour, rightNeighbour, bottomNeighbour],
+                MatchRule.Plus
+            );
+
+            Assert.Equal(3, result.CapturedCards.Count);
+            Assert.All(neighbours, neighbour => Assert.Equal(Player1, neighbour.Owner));
+            Assert.Equal(new[] { MatchRule.Plus }, result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_Plus_UnequalSums_CaptureNothing()
+        {
+            // 5 + 6 = 11 but 4 + 5 = 9, so no sum matches and there is no rank tie either.
+            var playedCard = CreateCard(1, 5, 4, 1, 1);
+            var topNeighbour = CreatePlacement(TopNeighbourCard(2, bottom: 6), Player2, 1, 0);
+            var rightNeighbour = CreatePlacement(RightNeighbourCard(3, left: 5), Player2, 2, 1);
+
+            var (result, _) = PlayCenter(
+                playedCard,
+                [topNeighbour, rightNeighbour],
+                MatchRule.Plus
+            );
+
+            Assert.Empty(result.CapturedCards);
+            Assert.Empty(result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_Plus_SkipsCardsAlreadyCapturedByBasicBattle()
+        {
+            // Both collisions are strict wins (5 > 2, 4 > 3) and both sums are 7, so PLUS's condition holds
+            // but basic battle already claimed both cards: the cause stays basic battle and PLUS is not
+            // reported because it flipped nothing.
+            var playedCard = CreateCard(1, 5, 4, 1, 1);
+            var topNeighbour = CreatePlacement(TopNeighbourCard(2, bottom: 2), Player2, 1, 0);
+            var rightNeighbour = CreatePlacement(RightNeighbourCard(3, left: 3), Player2, 2, 1);
+
+            var (result, neighbours) = PlayCenter(
+                playedCard,
+                [topNeighbour, rightNeighbour],
+                MatchRule.Plus
+            );
+
+            Assert.Equal(2, result.CapturedCards.Count);
+            Assert.All(neighbours, neighbour => Assert.Equal(Player1, neighbour.Owner));
+            Assert.All(
+                neighbours,
+                neighbour =>
+                {
+                    var cause = CaptureCauseOf(result, neighbour);
+                    Assert.NotNull(cause);
+                    Assert.Null(cause.Rule);
+                }
+            );
+            Assert.Empty(result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_Plus_OwnCardSum_CountsTowardTheMatch_ButIsNeverFlipped()
+        {
+            // The player's own card contributes 5 + 6 = 11, matching the opponent's 4 + 7 = 11, so PLUS
+            // fires — but only the opponent's card can flip.
+            var playedCard = CreateCard(1, 5, 4, 1, 1);
+            var ownNeighbour = CreatePlacement(TopNeighbourCard(2, bottom: 6), Player1, 1, 0);
+            var opponentNeighbour = CreatePlacement(RightNeighbourCard(3, left: 7), Player2, 2, 1);
+
+            var (result, _) = PlayCenter(
+                playedCard,
+                [ownNeighbour, opponentNeighbour],
+                MatchRule.Plus
+            );
+
+            Assert.Single(result.CapturedCards);
+            Assert.Same(opponentNeighbour, result.CapturedCards[0]);
+            Assert.Equal(Player1, opponentNeighbour.Owner);
+            Assert.DoesNotContain(ownNeighbour, result.CapturedCards);
+            Assert.Equal(Player1, ownNeighbour.Owner);
+            Assert.Equal(new[] { MatchRule.Plus }, result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_Plus_OwnCardSumsOnly_DoNotTrigger()
+        {
+            // Two own-card collisions share the sum 11, but there is nothing of the opponent's to flip.
+            var playedCard = CreateCard(1, 5, 4, 1, 1);
+            var firstOwnNeighbour = CreatePlacement(TopNeighbourCard(2, bottom: 6), Player1, 1, 0);
+            var secondOwnNeighbour = CreatePlacement(RightNeighbourCard(3, left: 7), Player1, 2, 1);
+
+            var (result, _) = PlayCenter(
+                playedCard,
+                [firstOwnNeighbour, secondOwnNeighbour],
+                MatchRule.Plus
+            );
+
+            Assert.Empty(result.CapturedCards);
+            Assert.Equal(Player1, firstOwnNeighbour.Owner);
+            Assert.Equal(Player1, secondOwnNeighbour.Owner);
+            Assert.Empty(result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_Same_OnAPlusShapedBoard_DoesNothing()
+        {
+            // Independence: with only SAME enabled, a board that satisfies PLUS (no ties anywhere) is
+            // simply an ordinary move — SAME never reads PLUS's condition.
+            var playedCard = CreateCard(1, 5, 4, 1, 1);
+            var topNeighbour = CreatePlacement(TopNeighbourCard(2, bottom: 6), Player2, 1, 0);
+            var rightNeighbour = CreatePlacement(RightNeighbourCard(3, left: 7), Player2, 2, 1);
+
+            var (result, _) = PlayCenter(
+                playedCard,
+                [topNeighbour, rightNeighbour],
+                MatchRule.Same
+            );
+
+            Assert.Empty(result.CapturedCards);
+            Assert.Empty(result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_Plus_WithSameEnabled_OnAPlusShapedBoard_StillFiresPlus()
+        {
+            // PLUS needs no SAME trigger: with both rules enabled and nothing tied on rank, only PLUS runs.
+            var playedCard = CreateCard(1, 5, 4, 1, 1);
+            var topNeighbour = CreatePlacement(TopNeighbourCard(2, bottom: 6), Player2, 1, 0);
+            var rightNeighbour = CreatePlacement(RightNeighbourCard(3, left: 7), Player2, 2, 1);
+
+            var (result, neighbours) = PlayCenter(
+                playedCard,
+                [topNeighbour, rightNeighbour],
+                MatchRule.Same,
+                MatchRule.Plus
+            );
+
+            Assert.Equal(2, result.CapturedCards.Count);
+            Assert.All(
+                neighbours,
+                neighbour => Assert.Equal(MatchRule.Plus, CaptureCauseOf(result, neighbour)!.Rule)
+            );
+            Assert.Equal(new[] { MatchRule.Plus }, result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_SameAndPlus_SharedCards_ReportSame_AndPlusTakesTheRest()
+        {
+            // Both rank ties share the sum 10 (5 + 5), and the losing 3 + 7 collision shares it too. SAME
+            // is evaluated first, so it is the cause of the two tied cards; PLUS still flips the card SAME
+            // could not take, even though that neighbour beats the played card on its touching side.
+            var playedCard = CreateCard(1, 5, 5, 3, 1);
+            var topNeighbour = CreatePlacement(TopNeighbourCard(2, bottom: 5), Player2, 1, 0);
+            var rightNeighbour = CreatePlacement(RightNeighbourCard(3, left: 5), Player2, 2, 1);
+            var bottomNeighbour = CreatePlacement(BottomNeighbourCard(4, top: 7), Player2, 1, 2);
+
+            var (result, _) = PlayCenter(
+                playedCard,
+                [topNeighbour, rightNeighbour, bottomNeighbour],
+                MatchRule.Same,
+                MatchRule.Plus
+            );
+
+            Assert.Equal(3, result.CapturedCards.Count);
+            Assert.Equal(MatchRule.Same, CaptureCauseOf(result, topNeighbour)!.Rule);
+            Assert.Equal(MatchRule.Same, CaptureCauseOf(result, rightNeighbour)!.Rule);
+            Assert.Equal(MatchRule.Plus, CaptureCauseOf(result, bottomNeighbour)!.Rule);
+            Assert.Equal(new[] { MatchRule.Same, MatchRule.Plus }, result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_SameAndPlus_OverlapFullyClaimedBySame_DoesNotReportPlus()
+        {
+            // Every card in PLUS's matching sum is also a SAME tie, so SAME claims both and PLUS is not
+            // reported at all: a rule that flipped nothing must not appear in triggeredRules.
+            var playedCard = CreateCard(1, 5, 5, 1, 1);
+            var topNeighbour = CreatePlacement(TopNeighbourCard(2, bottom: 5), Player2, 1, 0);
+            var rightNeighbour = CreatePlacement(RightNeighbourCard(3, left: 5), Player2, 2, 1);
+
+            var (result, _) = PlayCenter(
+                playedCard,
+                [topNeighbour, rightNeighbour],
+                MatchRule.Same,
+                MatchRule.Plus
+            );
+
+            Assert.Equal(2, result.CapturedCards.Count);
+            Assert.Equal(MatchRule.Same, CaptureCauseOf(result, topNeighbour)!.Rule);
+            Assert.Equal(MatchRule.Same, CaptureCauseOf(result, rightNeighbour)!.Rule);
+            Assert.Equal(new[] { MatchRule.Same }, result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_Plus_Flip_MovesScoresByTheFlippedCards()
+        {
+            var playedCard = CreateCard(1, 5, 4, 1, 1);
+            var topNeighbour = CreatePlacement(TopNeighbourCard(2, bottom: 6), Player2, 1, 0);
+            var rightNeighbour = CreatePlacement(RightNeighbourCard(3, left: 7), Player2, 2, 1);
+
+            var (result, _) = PlayCenter(
+                playedCard,
+                [topNeighbour, rightNeighbour],
+                MatchRule.Plus
+            );
+
+            // P1: 5 (start) + 3 owned on board (played + 2 flipped) - 1 played = 7
+            // P2: 5 (start) + 0 owned on board - 2 played = 3
+            Assert.Equal(7, result.Player1Score);
+            Assert.Equal(3, result.Player2Score);
+        }
+
+        [Fact]
         public void PlayCard_SameFlip_MovesScoresByTheFlippedCards()
         {
             var (result, _, _) = PlayTwoTieBoard(MatchRule.Same);
@@ -323,6 +567,43 @@ namespace TripleTriadApi.Tests.Services
             var result = GameLogic.PlayCard(match, placements, playedCard, Player1, 1, 1);
             return (result, ties, battleCaptures);
         }
+
+        /// <summary>
+        /// Plays <paramref name="playedCard"/> from the centre of the board with the given neighbours and
+        /// returns the result plus those neighbours, so tests can assert owners and causes by position.
+        /// </summary>
+        private static (
+            GameLogicService.PlayCardResult Result,
+            List<CardPlacement> Neighbours
+        ) PlayCenter(Card playedCard, List<CardPlacement> neighbours, params MatchRule[] rules)
+        {
+            var match = CreateMatch(rules);
+            var result = GameLogic.PlayCard(match, neighbours, playedCard, Player1, 1, 1);
+            return (result, neighbours);
+        }
+
+        /// <summary>
+        /// Why the card at that position flipped (null rule = basic battle), or null when the position was
+        /// not captured at all.
+        /// </summary>
+        private static CaptureResolution.CaptureCause? CaptureCauseOf(
+            GameLogicService.PlayCardResult result,
+            CardPlacement placement
+        )
+        {
+            return result.CaptureCauses.SingleOrDefault(cause =>
+                cause.X == placement.X && cause.Y == placement.Y
+            );
+        }
+
+        /// <summary>Card for the neighbour above the centre — only its bottom value is compared.</summary>
+        private static Card TopNeighbourCard(int id, int bottom) => CreateCard(id, 1, 1, bottom, 1);
+
+        /// <summary>Card for the neighbour right of the centre — only its left value is compared.</summary>
+        private static Card RightNeighbourCard(int id, int left) => CreateCard(id, 1, 1, 1, left);
+
+        /// <summary>Card for the neighbour below the centre — only its top value is compared.</summary>
+        private static Card BottomNeighbourCard(int id, int top) => CreateCard(id, top, 1, 1, 1);
 
         private static Match CreateMatch(params MatchRule[] rules)
         {
