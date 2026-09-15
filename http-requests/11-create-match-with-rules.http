@@ -10,6 +10,8 @@
 # MatchJoined/MatchStatus payloads as `rules: ["Same"]`.
 # With SAME on (FF8 semantics), a tie with one of your own cards counts toward the two-or-more
 # ties the rule needs, but own cards can never be captured — only the tied opponent cards flip.
+# When SAME and PLUS would both flip the same card, SAME is the reported cause: `triggeredRules`
+# comes back ordered SAME first (see the SAME + PLUS sample below).
 POST {{baseUrl}}{{apiPath}}/match
 Content-Type: {{contentType}}
 Accept: {{accept}}
@@ -18,6 +20,37 @@ Accept: {{accept}}
 {
   "opponentId": null,
   "rules": ["Same"]
+}
+
+###
+
+### Create Match with the PLUS rule
+# PLUS is independent of SAME: it fires when two or more collisions share the same touching-value
+# sum (attack + defense), ignoring the rank comparison — so it can flip a neighbour that beats the
+# played card on that side. Own cards may form a matching sum but are never flipped.
+POST {{baseUrl}}{{apiPath}}/match
+Content-Type: {{contentType}}
+Accept: {{accept}}
+{{authHeader}}
+
+{
+  "opponentId": null,
+  "rules": ["Plus"]
+}
+
+###
+
+### Create Match with SAME + PLUS
+# Both rules are evaluated on their own; when they overlap on a card, SAME is its cause and
+# `triggeredRules` is ["Same","Plus"].
+POST {{baseUrl}}{{apiPath}}/match
+Content-Type: {{contentType}}
+Accept: {{accept}}
+{{authHeader}}
+
+{
+  "opponentId": null,
+  "rules": ["Same", "Plus"]
 }
 
 ###
@@ -36,6 +69,8 @@ Accept: {{accept}}
 ###
 
 ### Create Match with an unknown rule -> 400
+# Any name that is not a rule is rejected; the response lists the supported names, which now
+# include `Plus`. (`Combo` is still unimplemented — swap it for the next real rule when it lands.)
 POST {{baseUrl}}{{apiPath}}/match
 Content-Type: {{contentType}}
 Accept: {{accept}}
@@ -43,7 +78,7 @@ Accept: {{accept}}
 
 {
   "opponentId": null,
-  "rules": ["Plus"]
+  "rules": ["Combo"]
 }
 
 ###
@@ -69,7 +104,7 @@ Accept: {{accept}}
 
 ###
 
-### Play a card (response carries `triggeredRules`, e.g. ["Same"] when the rule fired)
+### Play a card (response carries `triggeredRules`, e.g. ["Same"], ["Plus"] or ["Same","Plus"])
 POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/play
 Content-Type: {{contentType}}
 Accept: {{accept}}

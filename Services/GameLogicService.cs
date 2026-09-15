@@ -18,6 +18,12 @@ namespace TripleTriadApi.Services
             /// Special rules that fired while resolving this move (empty when none did).
             /// </summary>
             public List<MatchRule> TriggeredRules { get; set; } = [];
+
+            /// <summary>
+            /// Why each captured card flipped: the rule that claimed it, or <c>null</c> for a basic
+            /// battle capture. A card both SAME and PLUS would flip is reported once, as SAME's.
+            /// </summary>
+            public List<CaptureResolution.CaptureCause> CaptureCauses { get; set; } = [];
         }
 
         /// <summary>
@@ -129,10 +135,18 @@ namespace TripleTriadApi.Services
         private const int SameMinimumTies = 2;
 
         /// <summary>
+        /// Number of collisions that must share the same touching-value sum to trigger the PLUS rule.
+        /// Deliberately separate from <see cref="SameMinimumTies"/> so tuning one rule cannot affect the
+        /// other (rules must work independently of each other).
+        /// </summary>
+        private const int PlusMinimumMatchingSums = 2;
+
+        /// <summary>
         /// Resolves every capture the move causes, in phases: basic battles first, then the special rules
-        /// enabled on the match. Ownership is flipped as cards are captured (see
-        /// <see cref="CaptureResolution.TryAdd"/>) so later phases see the updated board and future rules
-        /// such as COMBO can chain from the cards a rule captured.
+        /// enabled on the match, SAME before PLUS. Ownership is flipped as cards are captured (see
+        /// <see cref="CaptureResolution.TryAdd"/>) so later phases see the updated board, future rules such
+        /// as COMBO can chain from the cards a rule captured, and a card both rules would flip keeps the
+        /// cause of the first phase that claimed it.
         ///
         /// Every phase sees every collision, own cards included; each phase decides what it may flip
         /// (ownership decides capturability, not whether two cards collide).
@@ -151,11 +165,11 @@ namespace TripleTriadApi.Services
             {
                 if (collision.IsOpponentCardOf(move.Actor) && collision.IsStrictWin)
                 {
-                    resolution.TryAdd(collision.Placement, move.Actor, isRuleCapture: false);
+                    resolution.TryAdd(collision.Placement, move.Actor, cause: null);
                 }
             }
 
-            // Phase 2 - Special rules (SAME today; Plus / SameWall / COMBO plug in here later).
+            // Phase 2 - Special rules, each independent: SAME, then PLUS (SameWall / COMBO plug in here).
             EvaluateRuleCaptures(match.Rules, move, collisions, resolution);
 
             return resolution;
@@ -269,6 +283,7 @@ namespace TripleTriadApi.Services
                 IsGameComplete = isGameComplete,
                 WinnerId = winnerId,
                 TriggeredRules = captureResolution.TriggeredRules.ToList(),
+                CaptureCauses = captureResolution.CaptureCauses.ToList(),
             };
         }
 
@@ -299,9 +314,15 @@ namespace TripleTriadApi.Services
         }
 
         /// <summary>
-        /// Evaluates every special rule enabled on the match, adding its captures to the resolution.
-        /// Rules receive every collision (own cards included) and decide for themselves what to flip.
-        /// This is the extension point for future rules (Plus, SameWall, COMBO).
+        /// Evaluates every special rule enabled on the match, adding its captures to the resolution. Each
+        /// rule runs off its own flag and never reads another rule's results, so a match with only SAME or
+        /// only PLUS behaves exactly as that rule describes. Rules receive every collision (own cards
+        /// included) and decide for themselves what to flip.
+        ///
+        /// The order matters for attribution only: SAME runs before PLUS, so when both would flip the same
+        /// card the first claim wins and SAME is its recorded cause (see
+        /// <see cref="CaptureResolution.TryAdd"/>). This is the extension point for future rules
+        /// (SameWall, COMBO).
         /// </summary>
         private static void EvaluateRuleCaptures(
             List<MatchRule> rules,
@@ -316,9 +337,14 @@ namespace TripleTriadApi.Services
                 EvaluateSameRule(collisions, move, resolution);
             }
 
-            // FUTURE: Plus (two collisions with the same attack + defense sum), SameWall (board
-            // edges count as A) and COMBO (chain the cards in resolution.RuleCapturedCards) are
-            // evaluated here, each adding its captures through resolution.TryAdd(..., true).
+            if (rules.Contains(MatchRule.Plus))
+            {
+                EvaluatePlusRule(collisions, move, resolution);
+            }
+
+            // FUTURE: SameWall (board edges count as A) and COMBO (chain the cards in
+            // resolution.RuleCapturedCards) are evaluated here, each adding its captures through
+            // resolution.TryAdd(..., cause).
         }
 
         /// <summary>
@@ -341,22 +367,62 @@ namespace TripleTriadApi.Services
                 return;
             }
 
-            var tiedOpponentCards = tiedCollisions
-                .Where(collision => collision.IsOpponentCardOf(move.Actor))
-                .ToList();
-
-            // Own-card ties alone meet the threshold but cannot flip anything.
-            if (tiedOpponentCards.Count == 0)
+            var flips = 0;
+            foreach (var collision in tiedCollisions)
             {
-                return;
+                // Own-card ties meet the threshold but cannot flip anything.
+                if (
+                    collision.IsOpponentCardOf(move.Actor)
+                    && resolution.TryAdd(collision.Placement, move.Actor, MatchRule.Same)
+                )
+                {
+                    flips++;
+                }
             }
 
-            foreach (var collision in tiedOpponentCards)
+            // Only report the rule when it actually flipped a card.
+            if (flips > 0)
             {
-                resolution.TryAdd(collision.Placement, move.Actor, isRuleCapture: true);
+                resolution.MarkRuleTriggered(MatchRule.Same);
+            }
+        }
+
+        /// <summary>
+        /// PLUS (FF8): when two or more collisions share the same touching-value sum (attack + defense),
+        /// every card involved in those matching sums flips. The rank comparison is irrelevant, so this can
+        /// flip a neighbour that beats the played card on that side. Cards of the player may contribute a
+        /// sum but are never flipped (they are already that player's), so a matching sum needs at least one
+        /// opponent card to do anything — and the rule is reported only when it flipped something.
+        /// </summary>
+        private static void EvaluatePlusRule(
+            List<Collision> collisions,
+            Move move,
+            CaptureResolution resolution
+        )
+        {
+            // A plus is a group of two or more collisions whose touching values share the same sum.
+            var matchingSums = collisions
+                .GroupBy(collision => collision.AttackValue + collision.DefenseValue)
+                .Where(group => group.Count() >= PlusMinimumMatchingSums)
+                .SelectMany(group => group);
+
+            var flips = 0;
+            foreach (var collision in matchingSums)
+            {
+                if (
+                    collision.IsOpponentCardOf(move.Actor)
+                    && resolution.TryAdd(collision.Placement, move.Actor, MatchRule.Plus)
+                )
+                {
+                    flips++;
+                }
             }
 
-            resolution.MarkRuleTriggered(MatchRule.Same);
+            // Only report the rule when it actually flipped a card.
+            if (flips > 0)
+            {
+                resolution.MarkRuleTriggered(MatchRule.Plus);
+            }
         }
 
         /// <summary>

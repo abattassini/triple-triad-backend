@@ -17,10 +17,19 @@ namespace TripleTriadApi.Models
         /// </summary>
         Same = 1,
 
+        /// <summary>
+        /// PLUS (FF8): when two or more collisions share the same touching-value sum (attack + defense),
+        /// the cards involved in those matching sums flip to the player who played the card. The rank
+        /// comparison is irrelevant, so PLUS can flip a neighbour that beats the played card on that
+        /// side. A collision with the player's own card counts toward the sum match but is already that
+        /// player's, so at least one involved neighbour has to belong to the opponent. SAME is evaluated
+        /// first, so a card both rules would flip is reported as SAME's.
+        /// </summary>
+        Plus = 2,
+
         // Rules that will follow. The capture pipeline in GameLogicService is already split into
         // phases, so each of these is an extra evaluation phase rather than a rewrite:
         //   Combo,    // chains the cards captured by Same/Plus
-        //   Plus,     // two collisions with the same attack + defense sum
         //   SameWall, // board edges count as A for the Same rule
     }
 }
