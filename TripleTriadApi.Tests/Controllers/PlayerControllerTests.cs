@@ -143,6 +143,121 @@ namespace TripleTriadApi.Tests.Controllers
             Assert.IsType<UnauthorizedObjectResult>(result.Result);
         }
 
+        [Fact]
+        public async Task Cards_WithALevelFilter_ReturnsOnlyThatLevel()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, PlayerLogin);
+            AddOwnedCard(context, PlayerLogin, cardId: 1, level: 1, quantity: 1);
+            AddOwnedCard(context, PlayerLogin, cardId: 5, level: 3, quantity: 1);
+            AddOwnedCard(context, PlayerLogin, cardId: 6, level: 3, quantity: 2);
+            await context.SaveChangesAsync();
+
+            var controller = CreateController(context, PlayerLogin);
+
+            var result = await controller.Cards(level: 3);
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+
+            // What the page loads when level 3 is picked: only that level, still ordered by card id.
+            Assert.Equal(2, json.RootElement.GetArrayLength());
+            Assert.All(
+                json.RootElement.EnumerateArray(),
+                entry => Assert.Equal(3, entry.GetProperty("card").GetProperty("level").GetInt32())
+            );
+            Assert.Equal(
+                new[] { 5, 6 },
+                json.RootElement.EnumerateArray()
+                    .Select(entry => entry.GetProperty("card").GetProperty("id").GetInt32())
+            );
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(11)]
+        public async Task Cards_WithALevelOutsideTheCatalogue_Returns400(int level)
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, PlayerLogin);
+            var controller = CreateController(context, PlayerLogin);
+
+            var result = await controller.Cards(level);
+
+            var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(badRequest.Value));
+            Assert.Contains("between 1 and 10", json.RootElement.GetProperty("error").GetString());
+        }
+
+        [Fact]
+        public async Task CardsSummary_ReturnsTotalsAndTheOwnedLevelsWithCatalogueCounts()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, PlayerLogin);
+            await SeedPlayerAsync(context, "someone-else");
+
+            // Owned: level 1 has two distinct cards (one held twice), level 3 one card. The catalogue holds three
+            // level-1 cards and three level-3 cards (the extra ones the player lacks), plus an unrelated level-2
+            // card, so the summary's totals come from the catalogue rather than from what is owned.
+            AddOwnedCard(context, PlayerLogin, cardId: 1, level: 1, quantity: 2);
+            AddOwnedCard(context, PlayerLogin, cardId: 2, level: 1, quantity: 1);
+            AddOwnedCard(context, PlayerLogin, cardId: 5, level: 3, quantity: 1);
+            AddOwnedCard(context, "someone-else", cardId: 7, level: 3, quantity: 5);
+            AddCatalogCard(context, cardId: 3, level: 1);
+            await context.SaveChangesAsync();
+            AddCatalogCard(context, cardId: 4, level: 2);
+            AddCatalogCard(context, cardId: 6, level: 3);
+            await context.SaveChangesAsync();
+
+            var controller = CreateController(context, PlayerLogin);
+
+            var result = await controller.CardsSummary();
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+            var root = json.RootElement;
+
+            Assert.Equal(3, root.GetProperty("distinctCards").GetInt32());
+            Assert.Equal(4, root.GetProperty("copiesOwned").GetInt32());
+
+            var levels = root.GetProperty("levels");
+            Assert.Equal(2, levels.GetArrayLength()); // level 2 is owned by nobody, so it is not offered
+            Assert.Equal(1, levels[0].GetProperty("level").GetInt32());
+            Assert.Equal(2, levels[0].GetProperty("ownedCount").GetInt32());
+            Assert.Equal(3, levels[0].GetProperty("totalCount").GetInt32());
+            Assert.Equal(3, levels[1].GetProperty("level").GetInt32());
+            Assert.Equal(1, levels[1].GetProperty("ownedCount").GetInt32());
+            Assert.Equal(3, levels[1].GetProperty("totalCount").GetInt32());
+        }
+
+        [Fact]
+        public async Task CardsSummary_WithNoOwnedCards_ReturnsZeroesAndNoLevels()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, PlayerLogin);
+            var controller = CreateController(context, PlayerLogin);
+
+            var result = await controller.CardsSummary();
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+
+            Assert.Equal(0, json.RootElement.GetProperty("distinctCards").GetInt32());
+            Assert.Equal(0, json.RootElement.GetProperty("copiesOwned").GetInt32());
+            Assert.Equal(0, json.RootElement.GetProperty("levels").GetArrayLength());
+        }
+
+        [Fact]
+        public async Task CardsSummary_WithoutALogin_Returns401()
+        {
+            using var context = CreateContext();
+            var controller = CreateController(context, login: null);
+
+            var result = await controller.CardsSummary();
+
+            Assert.IsType<UnauthorizedObjectResult>(result.Result);
+        }
+
         private static TripleTriadContext CreateContext() =>
             new(
                 new DbContextOptionsBuilder<TripleTriadContext>()
@@ -156,6 +271,7 @@ namespace TripleTriadApi.Tests.Controllers
             var controller = new PlayerController(
                 new PlayerRepository(context),
                 new PlayerCardRepository(context),
+                new GameRepository(context),
                 new PasswordHasherService(),
                 new RegisterPlayerRequestValidator(),
                 new TokenService()
@@ -191,14 +307,8 @@ namespace TripleTriadApi.Tests.Controllers
             await context.SaveChangesAsync();
         }
 
-        /// <summary>Files one owned card, adding its catalogue row too (the repository includes it).</summary>
-        private static void AddOwnedCard(
-            TripleTriadContext context,
-            string login,
-            int cardId,
-            int level,
-            int quantity
-        )
+        /// <summary>Adds a catalogue card with no ownership (used for the per-level totals).</summary>
+        private static void AddCatalogCard(TripleTriadContext context, int cardId, int level)
         {
             context.Cards.Add(
                 new Card
@@ -214,6 +324,18 @@ namespace TripleTriadApi.Tests.Controllers
                     Level = level,
                 }
             );
+        }
+
+        /// <summary>Files one owned card, adding its catalogue row too (the repository includes it).</summary>
+        private static void AddOwnedCard(
+            TripleTriadContext context,
+            string login,
+            int cardId,
+            int level,
+            int quantity
+        )
+        {
+            AddCatalogCard(context, cardId, level);
 
             context.PlayerCards.Add(
                 new PlayerCard
