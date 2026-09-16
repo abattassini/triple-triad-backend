@@ -7,6 +7,13 @@ namespace TripleTriadApi.Repositories
     public interface IGameRepository
     {
         Task<List<Card>> GetAllCardsAsync();
+
+        /// <summary>
+        /// How many cards the catalogue holds per level (level → count). Used to show "3 of 23" for a level
+        /// without loading the whole catalogue.
+        /// </summary>
+        Task<Dictionary<int, int>> GetCardCountsByLevelAsync();
+
         Task<Card?> GetCardByIdAsync(int cardId);
         Task<Match?> GetMatchByIdAsync(int matchId);
         Task<Match?> GetActiveMatchForPlayerAsync(string playerId);
@@ -34,6 +41,17 @@ namespace TripleTriadApi.Repositories
         public async Task<List<Card>> GetAllCardsAsync()
         {
             return await _context.Cards.ToListAsync();
+        }
+
+        public async Task<Dictionary<int, int>> GetCardCountsByLevelAsync()
+        {
+            // Counted in the database, so the collection summary never has to pull the catalogue.
+            var rows = await _context
+                .Cards.GroupBy(card => card.Level)
+                .Select(group => new { Level = group.Key, Count = group.Count() })
+                .ToListAsync();
+
+            return rows.ToDictionary(row => row.Level, row => row.Count);
         }
 
         public async Task<Card?> GetCardByIdAsync(int cardId)

@@ -15,6 +15,12 @@ namespace TripleTriadApi.Models
         public List<string> Element { get; set; } = [];
         public int Level { get; set; }
 
+        /// <summary>Lowest card level the catalogue uses (levels run <see cref="MinLevel"/>..<see cref="MaxLevel"/>).</summary>
+        public const int MinLevel = 1;
+
+        /// <summary>Highest card level the catalogue uses — the shop's draw weights and the collection filter share it.</summary>
+        public const int MaxLevel = 10;
+
         // Navigation properties for tracking card ownership in matches
         public virtual ICollection<CardPlacement> CardPlacements { get; set; } =
             new List<CardPlacement>();

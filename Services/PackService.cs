@@ -16,8 +16,10 @@ namespace TripleTriadApi.Services
         // Tunables, in one place (the same style as MatchRewardService's reward table).
         public const int PackPrice = 1500;
         public const int CardsPerPack = 5;
-        public const int MinCardLevel = 1;
-        public const int MaxCardLevel = 10;
+
+        // The level range the catalogue uses (see Card.MinLevel/MaxLevel), shared with the collection filter.
+        public const int MinCardLevel = Card.MinLevel;
+        public const int MaxCardLevel = Card.MaxLevel;
 
         private readonly IGameRepository _gameRepository;
         private readonly IPlayerRepository _playerRepository;

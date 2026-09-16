@@ -16,6 +16,7 @@ namespace TripleTriadApi.Controllers
     {
         private readonly IPlayerRepository _playerRepository;
         private readonly IPlayerCardRepository _playerCardRepository;
+        private readonly IGameRepository _gameRepository;
         private readonly PasswordHasherService _passwordHasher;
         private readonly RegisterPlayerRequestValidator _registerValidator;
         private readonly TokenService _tokenService;
@@ -23,6 +24,7 @@ namespace TripleTriadApi.Controllers
         public PlayerController(
             IPlayerRepository playerRepository,
             IPlayerCardRepository playerCardRepository,
+            IGameRepository gameRepository,
             PasswordHasherService passwordHasher,
             RegisterPlayerRequestValidator registerValidator,
             TokenService tokenService
@@ -30,6 +32,7 @@ namespace TripleTriadApi.Controllers
         {
             _playerRepository = playerRepository;
             _playerCardRepository = playerCardRepository;
+            _gameRepository = gameRepository;
             _passwordHasher = passwordHasher;
             _registerValidator = registerValidator;
             _tokenService = tokenService;
@@ -154,12 +157,12 @@ namespace TripleTriadApi.Controllers
 
         /// <summary>
         /// The authenticated player's card collection: one entry per owned card with the number of copies held,
-        /// ordered by card level. This is the shop's ownership table; there is no "My Cards" screen yet, so the
-        /// endpoint exists for the next step (browsing a collection / building a deck).
+        /// ordered by card level. <paramref name="level"/> narrows the result to a single level, which is how the
+        /// My Cards page loads one level at a time; a level outside the catalogue's range is a 400.
         /// </summary>
         [Authorize]
         [HttpGet("cards")]
-        public async Task<ActionResult<object>> Cards()
+        public async Task<ActionResult<object>> Cards([FromQuery] int? level = null)
         {
             try
             {
@@ -169,27 +172,63 @@ namespace TripleTriadApi.Controllers
                     return Unauthorized(new { error = "User not authenticated" });
                 }
 
-                var owned = await _playerCardRepository.GetForPlayerAsync(login);
+                if (level is not null && (level < Card.MinLevel || level > Card.MaxLevel))
+                {
+                    return BadRequest(
+                        new
+                        {
+                            error = $"Level must be between {Card.MinLevel} and {Card.MaxLevel}.",
+                        }
+                    );
+                }
+
+                var owned = await _playerCardRepository.GetForPlayerAsync(login, level);
+
+                return Ok(owned.Select(ToCollectionEntry));
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// The collection at a glance: the header totals plus one row per level the player owns cards in (distinct
+        /// cards held, and how many the catalogue has at that level). This is what fills the level picker, so the
+        /// page can show a level without loading the others.
+        /// </summary>
+        [Authorize]
+        [HttpGet("cards/summary")]
+        public async Task<ActionResult<object>> CardsSummary()
+        {
+            try
+            {
+                var login = GetCurrentLogin();
+                if (string.IsNullOrEmpty(login))
+                {
+                    return Unauthorized(new { error = "User not authenticated" });
+                }
+
+                var ownership = await _playerCardRepository.GetLevelOwnershipAsync(login);
+                var catalogueCounts = await _gameRepository.GetCardCountsByLevelAsync();
 
                 return Ok(
-                    owned.Select(playerCard => new
+                    new
                     {
-                        card = new
-                        {
-                            id = playerCard.Card.Id,
-                            name = playerCard.Card.Name,
-                            image = playerCard.Card.Image,
-                            topValue = playerCard.Card.TopValue,
-                            rightValue = playerCard.Card.RightValue,
-                            bottomValue = playerCard.Card.BottomValue,
-                            leftValue = playerCard.Card.LeftValue,
-                            element = playerCard.Card.Element,
-                            level = playerCard.Card.Level,
-                        },
-                        quantity = playerCard.Quantity,
-                        firstAcquiredAt = playerCard.FirstAcquiredAt,
-                        lastAcquiredAt = playerCard.LastAcquiredAt,
-                    })
+                        distinctCards = ownership.Sum(row => row.OwnedCount),
+                        copiesOwned = ownership.Sum(row => row.OwnedCopies),
+                        levels = ownership
+                            .Select(row => new
+                            {
+                                level = row.Level,
+                                ownedCount = row.OwnedCount,
+                                totalCount = catalogueCounts.GetValueOrDefault(
+                                    row.Level,
+                                    row.OwnedCount
+                                ),
+                            })
+                            .ToList(),
+                    }
                 );
             }
             catch (Exception ex)
@@ -197,6 +236,27 @@ namespace TripleTriadApi.Controllers
                 return StatusCode(500, new { error = ex.Message });
             }
         }
+
+        /// <summary>One collection entry: the card plus how many copies the player holds.</summary>
+        private static object ToCollectionEntry(PlayerCard playerCard) =>
+            new
+            {
+                card = new
+                {
+                    id = playerCard.Card.Id,
+                    name = playerCard.Card.Name,
+                    image = playerCard.Card.Image,
+                    topValue = playerCard.Card.TopValue,
+                    rightValue = playerCard.Card.RightValue,
+                    bottomValue = playerCard.Card.BottomValue,
+                    leftValue = playerCard.Card.LeftValue,
+                    element = playerCard.Card.Element,
+                    level = playerCard.Card.Level,
+                },
+                quantity = playerCard.Quantity,
+                firstAcquiredAt = playerCard.FirstAcquiredAt,
+                lastAcquiredAt = playerCard.LastAcquiredAt,
+            };
 
         /// <summary>
         /// Shared player projection used by register, sign-in and me so the frontend

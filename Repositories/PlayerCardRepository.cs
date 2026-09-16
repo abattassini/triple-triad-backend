@@ -4,13 +4,25 @@ using TripleTriadApi.Models;
 
 namespace TripleTriadApi.Repositories
 {
+    /// <summary>How much of one card level a player owns: distinct cards held and the copies those represent.</summary>
+    public sealed record LevelOwnership(int Level, int OwnedCount, int OwnedCopies);
+
     /// <summary>
     /// The cards a player owns outside of a match (the collection).
     /// </summary>
     public interface IPlayerCardRepository
     {
-        /// <summary>Every card the player owns, with its quantity, ordered by card level then card id.</summary>
-        Task<List<PlayerCard>> GetForPlayerAsync(string playerId);
+        /// <summary>
+        /// The player's owned cards with their quantities, ordered by card level then card id. Pass
+        /// <paramref name="level"/> to fetch a single level — the My Cards page loads one level at a time.
+        /// </summary>
+        Task<List<PlayerCard>> GetForPlayerAsync(string playerId, int? level = null);
+
+        /// <summary>
+        /// Per-level ownership for the player (distinct cards + copies held), ascending by level. Levels the
+        /// player owns nothing in are absent, which is what the level picker lists.
+        /// </summary>
+        Task<List<LevelOwnership>> GetLevelOwnershipAsync(string playerId);
 
         /// <summary>
         /// Files the drawn cards: +1 for a card the player already owns, a new row (quantity 1) otherwise.
@@ -23,14 +35,43 @@ namespace TripleTriadApi.Repositories
     {
         private readonly TripleTriadContext _context = context;
 
-        public async Task<List<PlayerCard>> GetForPlayerAsync(string playerId)
+        public async Task<List<PlayerCard>> GetForPlayerAsync(string playerId, int? level = null)
         {
-            return await _context
+            var query = _context
                 .PlayerCards.Include(pc => pc.Card)
-                .Where(pc => pc.PlayerId == playerId)
-                .OrderBy(pc => pc.Card.Level)
-                .ThenBy(pc => pc.CardId)
+                .Where(pc => pc.PlayerId == playerId);
+
+            if (level is not null)
+            {
+                query = query.Where(pc => pc.Card.Level == level);
+            }
+
+            return await query.OrderBy(pc => pc.Card.Level).ThenBy(pc => pc.CardId).ToListAsync();
+        }
+
+        public async Task<List<LevelOwnership>> GetLevelOwnershipAsync(string playerId)
+        {
+            // Grouped in the database: the page only needs the counts, never the rows themselves.
+            var rows = await _context
+                .PlayerCards.Where(pc => pc.PlayerId == playerId)
+                .GroupBy(pc => pc.Card.Level)
+                .Select(group => new
+                {
+                    Level = group.Key,
+                    OwnedCount = group.Count(),
+                    OwnedCopies = group.Sum(pc => pc.Quantity),
+                })
+                .OrderBy(row => row.Level)
                 .ToListAsync();
+
+            return
+            [
+                .. rows.Select(row => new LevelOwnership(
+                    row.Level,
+                    row.OwnedCount,
+                    row.OwnedCopies
+                )),
+            ];
         }
 
         public async Task AddOrIncrementManyAsync(string playerId, IReadOnlyList<int> cardIds)
