@@ -14,6 +14,7 @@ namespace TripleTriadApi.Data
         public DbSet<CardPlacement> CardPlacements { get; set; }
         public DbSet<PlayerHand> PlayerHands { get; set; }
         public DbSet<Player> Players { get; set; }
+        public DbSet<PlayerCard> PlayerCards { get; set; }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
@@ -92,7 +93,8 @@ namespace TripleTriadApi.Data
                         value => MatchRuleExtensions.ParseStorageString(value),
                         new ValueComparer<List<MatchRule>>(
                             (left, right) => left!.SequenceEqual(right!),
-                            rules => rules.Aggregate(0, (hash, rule) => HashCode.Combine(hash, rule)),
+                            rules =>
+                                rules.Aggregate(0, (hash, rule) => HashCode.Combine(hash, rule)),
                             rules => rules.ToList()
                         )
                     )
@@ -166,6 +168,26 @@ namespace TripleTriadApi.Data
                         e.CardId,
                     })
                     .IsUnique();
+            });
+
+            // PlayerCard entity configuration (cards owned outside of a match)
+            modelBuilder.Entity<PlayerCard>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.PlayerId).IsRequired().HasMaxLength(100);
+
+                // One row per owned card, so further copies only raise the quantity.
+                entity.Property(e => e.Quantity).HasDefaultValue(1);
+
+                entity.HasIndex(e => new { e.PlayerId, e.CardId }).IsUnique();
+
+                // The catalogue is reconciled on startup and never deleted, so an owned card can never
+                // disappear from under a collection row.
+                entity
+                    .HasOne(d => d.Card)
+                    .WithMany(c => c.PlayerCards)
+                    .HasForeignKey(d => d.CardId)
+                    .OnDelete(DeleteBehavior.Restrict);
             });
         }
     }

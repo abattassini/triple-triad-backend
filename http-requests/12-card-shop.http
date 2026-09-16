@@ -1,0 +1,55 @@
+# Card Shop
+# A pack is bought and opened in one call: the response carries the five cards, and they are filed in the
+# player's collection (PlayerCards) at the same time. Price, size and odds come from the backend so the shop
+# page can never disagree with what a purchase actually does.
+
+# Environment Variables
+@baseUrl = http://localhost:5041
+@shopPath = /api/shop
+@contentType = application/json
+@accept = application/json
+
+### The pack on offer: price, card count and the odds of every card level
+# 1,500 coins for 5 cards. Level odds are (600 - 20x) / 49 percent for x = 1..10, i.e. 11.84 % at level 1
+# down to 8.16 % at level 10, and a card of the drawn level is then picked uniformly.
+GET {{baseUrl}}{{shopPath}}/pack
+Accept: {{accept}}
+{{authHeader}}
+
+###
+
+### Buy (and open) a pack
+# 200 -> { success, price, coinsAfter, cards: [ { id, name, image, level, …, quantityOwned, isNew } ] }.
+# Every card is drawn independently, so the same card can appear twice in one pack, and a card the player
+# already owns simply raises its quantity (`isNew: false`).
+POST {{baseUrl}}{{shopPath}}/pack/purchase
+Content-Type: {{contentType}}
+Accept: {{accept}}
+{{authHeader}}
+
+{}
+
+###
+
+### Not enough coins -> 400 (nothing is written: no coins spent, no cards filed)
+POST {{baseUrl}}{{shopPath}}/pack/purchase
+Content-Type: {{contentType}}
+Accept: {{accept}}
+{{authHeader}}
+
+{}
+
+###
+
+### No token -> 401
+GET {{baseUrl}}{{shopPath}}/pack
+Accept: {{accept}}
+
+###
+
+### The collection itself (endpoint only — there is no "My Cards" screen yet)
+GET {{baseUrl}}/api/player/cards
+Accept: {{accept}}
+{{authHeader}}
+
+###

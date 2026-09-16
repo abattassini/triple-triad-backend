@@ -1,8 +1,8 @@
+using System.Security.Claims;
 using FluentValidation.Results;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 using TripleTriadApi.Models;
 using TripleTriadApi.Repositories;
 using TripleTriadApi.Services;
@@ -15,18 +15,21 @@ namespace TripleTriadApi.Controllers
     public class PlayerController : ControllerBase
     {
         private readonly IPlayerRepository _playerRepository;
+        private readonly IPlayerCardRepository _playerCardRepository;
         private readonly PasswordHasherService _passwordHasher;
         private readonly RegisterPlayerRequestValidator _registerValidator;
         private readonly TokenService _tokenService;
 
         public PlayerController(
             IPlayerRepository playerRepository,
+            IPlayerCardRepository playerCardRepository,
             PasswordHasherService passwordHasher,
             RegisterPlayerRequestValidator registerValidator,
             TokenService tokenService
         )
         {
             _playerRepository = playerRepository;
+            _playerCardRepository = playerCardRepository;
             _passwordHasher = passwordHasher;
             _registerValidator = registerValidator;
             _tokenService = tokenService;
@@ -97,7 +100,10 @@ namespace TripleTriadApi.Controllers
                 }
 
                 // Generic message avoids leaking whether the login/email exists.
-                if (player is null || !_passwordHasher.Verify(request.Password, player.PasswordHash))
+                if (
+                    player is null
+                    || !_passwordHasher.Verify(request.Password, player.PasswordHash)
+                )
                 {
                     return Unauthorized(new { error = "Invalid login or password." });
                 }
@@ -144,6 +150,52 @@ namespace TripleTriadApi.Controllers
         private string? GetCurrentLogin()
         {
             return User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+        }
+
+        /// <summary>
+        /// The authenticated player's card collection: one entry per owned card with the number of copies held,
+        /// ordered by card level. This is the shop's ownership table; there is no "My Cards" screen yet, so the
+        /// endpoint exists for the next step (browsing a collection / building a deck).
+        /// </summary>
+        [Authorize]
+        [HttpGet("cards")]
+        public async Task<ActionResult<object>> Cards()
+        {
+            try
+            {
+                var login = GetCurrentLogin();
+                if (string.IsNullOrEmpty(login))
+                {
+                    return Unauthorized(new { error = "User not authenticated" });
+                }
+
+                var owned = await _playerCardRepository.GetForPlayerAsync(login);
+
+                return Ok(
+                    owned.Select(playerCard => new
+                    {
+                        card = new
+                        {
+                            id = playerCard.Card.Id,
+                            name = playerCard.Card.Name,
+                            image = playerCard.Card.Image,
+                            topValue = playerCard.Card.TopValue,
+                            rightValue = playerCard.Card.RightValue,
+                            bottomValue = playerCard.Card.BottomValue,
+                            leftValue = playerCard.Card.LeftValue,
+                            element = playerCard.Card.Element,
+                            level = playerCard.Card.Level,
+                        },
+                        quantity = playerCard.Quantity,
+                        firstAcquiredAt = playerCard.FirstAcquiredAt,
+                        lastAcquiredAt = playerCard.LastAcquiredAt,
+                    })
+                );
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
         }
 
         /// <summary>

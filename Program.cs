@@ -1,7 +1,7 @@
+using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using System.Text;
 using TripleTriadApi.Data;
 using TripleTriadApi.Hubs;
 using TripleTriadApi.Repositories;
@@ -61,6 +61,7 @@ else
 // Register services
 builder.Services.AddScoped<IGameRepository, GameRepository>();
 builder.Services.AddScoped<IPlayerRepository, PlayerRepository>();
+builder.Services.AddScoped<IPlayerCardRepository, PlayerCardRepository>();
 builder.Services.AddScoped<GameLogicService>();
 builder.Services.AddScoped<GamePlayService>();
 builder.Services.AddScoped<CardSeederService>();
@@ -68,6 +69,10 @@ builder.Services.AddScoped<PasswordHasherService>();
 builder.Services.AddScoped<RegisterPlayerRequestValidator>();
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<MatchRewardService>();
+
+// Card shop: the pack draw needs randomness behind a seam (tests script it), so it is a singleton.
+builder.Services.AddSingleton<IRandomSource, SystemRandomSource>();
+builder.Services.AddScoped<PackService>();
 
 // JWT authentication (HS256, same SymmetricSecurityKey as the issued tokens).
 var jwtSecret =
