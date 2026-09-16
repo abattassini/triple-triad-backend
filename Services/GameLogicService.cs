@@ -142,11 +142,19 @@ namespace TripleTriadApi.Services
         private const int PlusMinimumMatchingSums = 2;
 
         /// <summary>
+        /// The rank the board's outer wall counts as for the SAME WALL and PLUS WALL rules. FF8 treats the
+        /// wall as an A card; this codebase stores A as <c>10</c> (A is not a separate rank — see
+        /// <c>GLOSSARY.md</c> gotcha #10), so the wall's value is 10 on the side facing the board and never
+        /// changes with the rank of any card.
+        /// </summary>
+        private const int WallValue = 10;
+
+        /// <summary>
         /// Resolves every capture the move causes, in phases: basic battles first, then the special rules
-        /// enabled on the match, SAME before PLUS. Ownership is flipped as cards are captured (see
-        /// <see cref="CaptureResolution.TryAdd"/>) so later phases see the updated board, future rules such
-        /// as COMBO can chain from the cards a rule captured, and a card both rules would flip keeps the
-        /// cause of the first phase that claimed it.
+        /// enabled on the match, SAME before PLUS and the wall rules last. Ownership is flipped as cards are
+        /// captured (see <see cref="CaptureResolution.TryAdd"/>) so later phases see the updated board, future
+        /// rules such as COMBO can chain from the cards a rule captured, and a card two phases would flip
+        /// keeps the cause of the first phase that claimed it.
         ///
         /// Every phase sees every collision, own cards included; each phase decides what it may flip
         /// (ownership decides capturability, not whether two cards collide).
@@ -161,15 +169,21 @@ namespace TripleTriadApi.Services
             var collisions = GetCollisions(move, board);
 
             // Phase 1 - Basic battle: only an opponent's card can be captured, and only on a strict win.
+            // Walls are not part of this list (GetCollisions returns real neighbours only).
             foreach (var collision in collisions)
             {
-                if (collision.IsOpponentCardOf(move.Actor) && collision.IsStrictWin)
+                if (
+                    collision.Placement is CardPlacement placement
+                    && collision.IsOpponentCardOf(move.Actor)
+                    && collision.IsStrictWin
+                )
                 {
-                    resolution.TryAdd(collision.Placement, move.Actor, cause: null);
+                    resolution.TryAdd(placement, move.Actor, cause: null);
                 }
             }
 
-            // Phase 2 - Special rules, each independent: SAME, then PLUS (SameWall / COMBO plug in here).
+            // Phase 2 - Special rules, each independent and each off its own flag: SAME, PLUS, then the wall
+            // rules SAME WALL and PLUS WALL (COMBO plugs in here).
             EvaluateRuleCaptures(match.Rules, move, collisions, resolution);
 
             return resolution;
@@ -180,11 +194,22 @@ namespace TripleTriadApi.Services
         /// card the move plays and the defending value of the neighbour on the touching sides. A collision
         /// exists for every occupied neighbour, whoever owns it — ownership decides what can be captured,
         /// not whether the two cards collide.
+        ///
+        /// A collision can also describe the board's outer wall (SAME WALL / PLUS WALL), in which case
+        /// <see cref="Placement"/> is <c>null</c>: the wall contributes a value but has no card, so it can
+        /// never be captured.
         /// </summary>
-        private sealed record Collision(CardPlacement Placement, int AttackValue, int DefenseValue)
+        private sealed record Collision(CardPlacement? Placement, int AttackValue, int DefenseValue)
         {
-            /// <summary>Only the opponent's cards can ever be captured.</summary>
-            public bool IsOpponentCardOf(string playerId) => Placement.Owner != playerId;
+            /// <summary>A wall collision — the board edge standing in for an A card.</summary>
+            public bool IsWall => Placement is null;
+
+            /// <summary>
+            /// Only the opponent's cards can ever be captured. A wall is nobody's card, so it is never
+            /// capturable and never satisfies "one of them has to be the opposite colour".
+            /// </summary>
+            public bool IsOpponentCardOf(string playerId) =>
+                Placement is not null && Placement.Owner != playerId;
 
             /// <summary>Equal touching values — what the SAME rule looks for.</summary>
             public bool IsTie => AttackValue == DefenseValue;
@@ -230,6 +255,33 @@ namespace TripleTriadApi.Services
                         GetCardValueBySide(neighborPlacement.Card, direction.OpponentSide)
                     )
                 );
+            }
+
+            return collisions;
+        }
+
+        /// <summary>
+        /// Collects one collision per battle direction that points off the board: the outer wall counts as a
+        /// card with <see cref="WallValue"/> (A) on the side facing the board, which is what the SAME WALL and
+        /// PLUS WALL rules add to the neighbours <see cref="GetCollisions"/> found. The resulting collisions
+        /// have no placement, so they can feed a tie or a matching sum but can never be captured.
+        ///
+        /// They are built only when a wall rule is enabled, so a match without them resolves exactly as before.
+        /// </summary>
+        private static List<Collision> GetWallCollisions(Move move)
+        {
+            var collisions = new List<Collision>();
+
+            foreach (var direction in GetBattleDirections(move.Card))
+            {
+                // The wall is the mirror image of GetCollisions' in-bounds check: only off-board directions
+                // produce one.
+                if (IsPositionInBounds(move.X + direction.Dx, move.Y + direction.Dy))
+                {
+                    continue;
+                }
+
+                collisions.Add(new Collision(null, direction.CardValue, WallValue));
             }
 
             return collisions;
@@ -315,14 +367,15 @@ namespace TripleTriadApi.Services
 
         /// <summary>
         /// Evaluates every special rule enabled on the match, adding its captures to the resolution. Each
-        /// rule runs off its own flag and never reads another rule's results, so a match with only SAME or
-        /// only PLUS behaves exactly as that rule describes. Rules receive every collision (own cards
-        /// included) and decide for themselves what to flip.
+        /// rule runs off its own flag and never reads another rule's results, so a match with only SAME, only
+        /// PLUS, only SAME WALL or only PLUS WALL behaves exactly as that rule describes. Rules receive every
+        /// collision (own cards included) and decide for themselves what to flip.
         ///
-        /// The order matters for attribution only: SAME runs before PLUS, so when both would flip the same
-        /// card the first claim wins and SAME is its recorded cause (see
-        /// <see cref="CaptureResolution.TryAdd"/>). This is the extension point for future rules
-        /// (SameWall, COMBO).
+        /// The order matters for attribution only: SAME runs before PLUS, and both run before the wall rules
+        /// (SAME WALL, PLUS WALL), so the first phase to claim a card owns its cause (see
+        /// <see cref="CaptureResolution.TryAdd"/>). Walls are evaluated last because a wall collision can only
+        /// ever *add* captures — it can never take a card away from SAME or PLUS. This is the extension point
+        /// for future rules (COMBO).
         /// </summary>
         private static void EvaluateRuleCaptures(
             List<MatchRule> rules,
@@ -334,17 +387,34 @@ namespace TripleTriadApi.Services
             // A rule is enabled when it appears in the match's list of rules.
             if (rules.Contains(MatchRule.Same))
             {
-                EvaluateSameRule(collisions, move, resolution);
+                EvaluateSameRule(collisions, move, resolution, MatchRule.Same);
             }
 
             if (rules.Contains(MatchRule.Plus))
             {
-                EvaluatePlusRule(collisions, move, resolution);
+                EvaluatePlusRule(collisions, move, resolution, MatchRule.Plus);
             }
 
-            // FUTURE: SameWall (board edges count as A) and COMBO (chain the cards in
-            // resolution.RuleCapturedCards) are evaluated here, each adding its captures through
-            // resolution.TryAdd(..., cause).
+            // The wall rules see the neighbours plus the board's edge, which counts as an A card. The wall
+            // collisions are built once, and only when a wall rule is enabled, so matches without them
+            // resolve exactly as before.
+            if (rules.Contains(MatchRule.SameWall) || rules.Contains(MatchRule.PlusWall))
+            {
+                var collisionsWithWalls = collisions.Concat(GetWallCollisions(move)).ToList();
+
+                if (rules.Contains(MatchRule.SameWall))
+                {
+                    EvaluateSameRule(collisionsWithWalls, move, resolution, MatchRule.SameWall);
+                }
+
+                if (rules.Contains(MatchRule.PlusWall))
+                {
+                    EvaluatePlusRule(collisionsWithWalls, move, resolution, MatchRule.PlusWall);
+                }
+            }
+
+            // FUTURE: COMBO (chain the cards in resolution.RuleCapturedCards) is evaluated here, adding its
+            // captures through resolution.TryAdd(..., cause).
         }
 
         /// <summary>
@@ -353,11 +423,16 @@ namespace TripleTriadApi.Services
         /// count toward the two-or-more but are already the player's, so only the tied opponent cards
         /// are captured — and at least one tied neighbour has to be the opponent's (FF8's "one or both
         /// of them have to be the opposite color"). A single tie captures nothing.
+        ///
+        /// The caller decides which collisions to consider and under which rule name the captures are
+        /// reported: SAME passes the real neighbours, SAME WALL passes the neighbours plus the wall
+        /// collisions (off-board directions, which count as an A card and can never be captured).
         /// </summary>
         private static void EvaluateSameRule(
             List<Collision> collisions,
             Move move,
-            CaptureResolution resolution
+            CaptureResolution resolution,
+            MatchRule cause
         )
         {
             var tiedCollisions = collisions.Where(collision => collision.IsTie).ToList();
@@ -370,10 +445,12 @@ namespace TripleTriadApi.Services
             var flips = 0;
             foreach (var collision in tiedCollisions)
             {
-                // Own-card ties meet the threshold but cannot flip anything.
+                // Own cards and walls meet the threshold but cannot be flipped (a wall has no placement
+                // at all, so the pattern check skips it).
                 if (
-                    collision.IsOpponentCardOf(move.Actor)
-                    && resolution.TryAdd(collision.Placement, move.Actor, MatchRule.Same)
+                    collision.Placement is CardPlacement placement
+                    && collision.IsOpponentCardOf(move.Actor)
+                    && resolution.TryAdd(placement, move.Actor, cause)
                 )
                 {
                     flips++;
@@ -383,7 +460,7 @@ namespace TripleTriadApi.Services
             // Only report the rule when it actually flipped a card.
             if (flips > 0)
             {
-                resolution.MarkRuleTriggered(MatchRule.Same);
+                resolution.MarkRuleTriggered(cause);
             }
         }
 
@@ -393,11 +470,17 @@ namespace TripleTriadApi.Services
         /// flip a neighbour that beats the played card on that side. Cards of the player may contribute a
         /// sum but are never flipped (they are already that player's), so a matching sum needs at least one
         /// opponent card to do anything — and the rule is reported only when it flipped something.
+        ///
+        /// The caller decides which collisions to consider and under which rule name the captures are
+        /// reported: PLUS passes the real neighbours, PLUS WALL passes the neighbours plus the wall collisions
+        /// (off-board directions, whose <see cref="WallValue"/> defending value makes a wall sum
+        /// <c>played value + A</c>).
         /// </summary>
         private static void EvaluatePlusRule(
             List<Collision> collisions,
             Move move,
-            CaptureResolution resolution
+            CaptureResolution resolution,
+            MatchRule cause
         )
         {
             // A plus is a group of two or more collisions whose touching values share the same sum.
@@ -409,9 +492,11 @@ namespace TripleTriadApi.Services
             var flips = 0;
             foreach (var collision in matchingSums)
             {
+                // Walls have no placement and own cards are already the player's, so neither can be flipped.
                 if (
-                    collision.IsOpponentCardOf(move.Actor)
-                    && resolution.TryAdd(collision.Placement, move.Actor, MatchRule.Plus)
+                    collision.Placement is CardPlacement placement
+                    && collision.IsOpponentCardOf(move.Actor)
+                    && resolution.TryAdd(placement, move.Actor, cause)
                 )
                 {
                     flips++;
@@ -421,7 +506,7 @@ namespace TripleTriadApi.Services
             // Only report the rule when it actually flipped a card.
             if (flips > 0)
             {
-                resolution.MarkRuleTriggered(MatchRule.Plus);
+                resolution.MarkRuleTriggered(cause);
             }
         }
 

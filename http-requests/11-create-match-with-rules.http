@@ -55,6 +55,54 @@ Accept: {{accept}}
 
 ###
 
+### Create Match with SAME WALL
+# SAME WALL is an independent rule: the board's outer wall counts as an A (10) card for SAME, so a wall
+# tie (played card's value on that side is A) counts toward the two-or-more ties the rule needs. It works
+# with SAME disabled, and because a wall has no owner it can never be captured — at least one tied
+# neighbour still has to be the opponent's.
+POST {{baseUrl}}{{apiPath}}/match
+Content-Type: {{contentType}}
+Accept: {{accept}}
+{{authHeader}}
+
+{
+  "opponentId": null,
+  "rules": ["SameWall"]
+}
+
+###
+
+### Create Match with PLUS WALL
+# The wall is an A card for the PLUS grouping too, so a wall contributes the sum `played value + 10` and
+# can be one of the two members of a matching sum — which lets PLUS WALL flip a neighbour that beats the
+# played card on that side. Works with PLUS disabled.
+POST {{baseUrl}}{{apiPath}}/match
+Content-Type: {{contentType}}
+Accept: {{accept}}
+{{authHeader}}
+
+{
+  "opponentId": null,
+  "rules": ["PlusWall"]
+}
+
+###
+
+### Create Match with every rule
+# Rules are independent: a match can enable any subset, and `rules` comes back in enum declaration order
+# (Same, Plus, SameWall, PlusWall) — which is also the order `triggeredRules` uses.
+POST {{baseUrl}}{{apiPath}}/match
+Content-Type: {{contentType}}
+Accept: {{accept}}
+{{authHeader}}
+
+{
+  "opponentId": null,
+  "rules": ["Same", "Plus", "SameWall", "PlusWall"]
+}
+
+###
+
 ### Create Match without rules (baseline behaviour)
 # No rules enabled: ties in a collision never capture anything.
 POST {{baseUrl}}{{apiPath}}/match
@@ -69,8 +117,9 @@ Accept: {{accept}}
 ###
 
 ### Create Match with an unknown rule -> 400
-# Any name that is not a rule is rejected; the response lists the supported names, which now
-# include `Plus`. (`Combo` is still unimplemented — swap it for the next real rule when it lands.)
+# Any name that is not a rule is rejected; the response lists the supported names, which now include
+# `Same`, `Plus`, `SameWall` and `PlusWall`. (`Combo` is still unimplemented — swap it for the next real
+# rule when it lands.)
 POST {{baseUrl}}{{apiPath}}/match
 Content-Type: {{contentType}}
 Accept: {{accept}}
@@ -104,7 +153,8 @@ Accept: {{accept}}
 
 ###
 
-### Play a card (response carries `triggeredRules`, e.g. ["Same"], ["Plus"] or ["Same","Plus"])
+### Play a card (response carries `triggeredRules`, e.g. ["Same"], ["Plus"], ["Same","Plus"],
+### ["SameWall"] or ["PlusWall"])
 POST {{baseUrl}}{{apiPath}}/match/{{testMatchId}}/play
 Content-Type: {{contentType}}
 Accept: {{accept}}
