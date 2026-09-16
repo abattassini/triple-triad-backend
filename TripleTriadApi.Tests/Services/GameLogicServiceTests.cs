@@ -4,12 +4,14 @@ using TripleTriadApi.Services;
 namespace TripleTriadApi.Tests.Services
 {
     /// <summary>
-    /// Unit tests for the capture pipeline in <see cref="GameLogicService"/>, focused on the SAME
-    /// rule. The service is pure logic, so the tests build plain models without a database.
+    /// Unit tests for the capture pipeline in <see cref="GameLogicService"/>, focused on the SAME, PLUS and
+    /// wall (SAME WALL / PLUS WALL) rules. The service is pure logic, so the tests build plain models without
+    /// a database.
     ///
     /// Board coordinates: x = column (0-2), y = row (0-2). The played card sits in the center
     /// (1, 1) unless a test says otherwise, so its neighbors are top (1, 0), right (2, 1),
-    /// bottom (1, 2) and left (0, 1).
+    /// bottom (1, 2) and left (0, 1). A card played on an edge touches one wall and a card played in a
+    /// corner two; the wall counts as an A (10) card for the wall rules only.
     /// </summary>
     public class GameLogicServiceTests
     {
@@ -503,6 +505,209 @@ namespace TripleTriadApi.Tests.Services
             Assert.Equal(1, result.Player2Score);
         }
 
+        [Fact]
+        public void PlayCard_SameWall_WallTieCountsTowardSame_WithoutSameEnabled()
+        {
+            // SAME WALL is its own rule: the wall counts as an A (10) card, so the played card's A side
+            // touching the wall is a tie, and together with the tied neighbour that is the two ties SAME
+            // needs. SAME is disabled here, so only the wall rule can be responsible for the flip.
+            var playedCard = CreateCard(1, top: 1, right: 5, bottom: 1, left: 10);
+            var rightNeighbour = CreatePlacement(RightNeighbourCard(2, left: 5), Player2, 1, 1);
+
+            var result = PlayAt(playedCard, [rightNeighbour], 0, 1, MatchRule.SameWall);
+
+            Assert.Single(result.CapturedCards);
+            Assert.Same(rightNeighbour, result.CapturedCards[0]);
+            Assert.Equal(Player1, rightNeighbour.Owner);
+            Assert.Equal(MatchRule.SameWall, CaptureCauseOf(result, rightNeighbour)!.Rule);
+            Assert.Equal(new[] { MatchRule.SameWall }, result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_Same_IgnoresTheWall_WhenSameWallIsDisabled()
+        {
+            // Same board as the test above, but with only SAME enabled: the wall is not a collision unless a
+            // wall rule is on, so the single card tie captures nothing.
+            var playedCard = CreateCard(1, top: 1, right: 5, bottom: 1, left: 10);
+            var rightNeighbour = CreatePlacement(RightNeighbourCard(2, left: 5), Player2, 1, 1);
+
+            var result = PlayAt(playedCard, [rightNeighbour], 0, 1, MatchRule.Same);
+
+            Assert.Empty(result.CapturedCards);
+            Assert.Equal(Player2, rightNeighbour.Owner);
+            Assert.Empty(result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_SameWall_WallTiePlusOwnCardTie_FlipsNothing()
+        {
+            // The wall tie and a tie with the player's own card make up the two ties, but a wall has no owner
+            // and the own card is already the player's: nothing can flip, so the rule is not reported.
+            var playedCard = CreateCard(1, top: 1, right: 5, bottom: 1, left: 10);
+            var ownCard = CreatePlacement(RightNeighbourCard(2, left: 5), Player1, 1, 1);
+
+            var result = PlayAt(playedCard, [ownCard], 0, 1, MatchRule.SameWall);
+
+            Assert.Empty(result.CapturedCards);
+            Assert.Equal(Player1, ownCard.Owner);
+            Assert.Empty(result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_SameWall_WallTieAlone_DoesNothing()
+        {
+            // A single wall tie is one collision: the wall cannot be captured and there is no second tie.
+            var playedCard = CreateCard(1, top: 1, right: 1, bottom: 1, left: 10);
+
+            var result = PlayAt(playedCard, [], 0, 1, MatchRule.SameWall);
+
+            Assert.Empty(result.CapturedCards);
+            Assert.Empty(result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_PlusWall_WallSumMatchesACardSum_FlipsABeatingNeighbour()
+        {
+            // The wall is an A card, so the played card's 3 against it sums to 13 — and the neighbour's 10
+            // against the played card's 3 sums to 13 as well. One matching sum of two flips the neighbour
+            // even though it beats the played card on that side.
+            var playedCard = CreateCard(1, top: 1, right: 3, bottom: 1, left: 3);
+            var rightNeighbour = CreatePlacement(RightNeighbourCard(2, left: 10), Player2, 1, 1);
+
+            var result = PlayAt(playedCard, [rightNeighbour], 0, 1, MatchRule.PlusWall);
+
+            Assert.Single(result.CapturedCards);
+            Assert.Same(rightNeighbour, result.CapturedCards[0]);
+            Assert.Equal(Player1, rightNeighbour.Owner);
+            Assert.Equal(MatchRule.PlusWall, CaptureCauseOf(result, rightNeighbour)!.Rule);
+            Assert.Equal(new[] { MatchRule.PlusWall }, result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_PlusWall_WallSumAlone_DoesNothing()
+        {
+            // The wall sum (3 + 10 = 13) has no partner, so no sum matches.
+            var playedCard = CreateCard(1, top: 1, right: 1, bottom: 1, left: 3);
+
+            var result = PlayAt(playedCard, [], 0, 1, MatchRule.PlusWall);
+
+            Assert.Empty(result.CapturedCards);
+            Assert.Empty(result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_PlusWall_TwoWallSumsOnly_FlipNothing()
+        {
+            // A corner card touches two walls, so both sums are 4 + 10 = 14 and they match — but neither wall
+            // is a card, so nothing flips and the rule is not reported.
+            var playedCard = CreateCard(1, top: 4, right: 1, bottom: 1, left: 4);
+
+            var result = PlayAt(playedCard, [], 0, 0, MatchRule.PlusWall);
+
+            Assert.Empty(result.CapturedCards);
+            Assert.Empty(result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_PlusWall_OwnCardSumCountsTowardTheMatch_OnlyOpponentFlips()
+        {
+            // 4 + 10 = 14 for the wall, the own neighbour and the opponent neighbour: all three are in the
+            // matching sum, but the wall and the own card cannot be captured.
+            var playedCard = CreateCard(1, top: 1, right: 4, bottom: 4, left: 4);
+            var ownCard = CreatePlacement(RightNeighbourCard(2, left: 10), Player1, 1, 1);
+            var opponentCard = CreatePlacement(BottomNeighbourCard(3, top: 10), Player2, 0, 2);
+
+            var result = PlayAt(playedCard, [ownCard, opponentCard], 0, 1, MatchRule.PlusWall);
+
+            Assert.Single(result.CapturedCards);
+            Assert.Same(opponentCard, result.CapturedCards[0]);
+            Assert.Equal(Player1, opponentCard.Owner);
+            Assert.DoesNotContain(ownCard, result.CapturedCards);
+            Assert.Equal(Player1, ownCard.Owner);
+            Assert.Equal(new[] { MatchRule.PlusWall }, result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_PlusAndSameWall_EachPhaseFlipsItsOwnCard_ReportsBoth()
+        {
+            // PLUS takes the two cards sharing the sum 11 (5 + 6 and 3 + 8) and leaves the tied 1 + 1 pair
+            // alone, because that sum is not shared. SAME WALL then sees that tie plus the wall tie, so it
+            // flips the tied card: one move can report two rules, each owning its own captures.
+            var playedCard = CreateCard(1, top: 5, right: 3, bottom: 1, left: 10);
+            var topNeighbour = CreatePlacement(TopNeighbourCard(2, bottom: 6), Player2, 0, 0);
+            var rightNeighbour = CreatePlacement(RightNeighbourCard(3, left: 8), Player2, 1, 1);
+            var bottomNeighbour = CreatePlacement(BottomNeighbourCard(4, top: 1), Player2, 0, 2);
+
+            var result = PlayAt(
+                playedCard,
+                [topNeighbour, rightNeighbour, bottomNeighbour],
+                0,
+                1,
+                MatchRule.Plus,
+                MatchRule.SameWall
+            );
+
+            Assert.Equal(3, result.CapturedCards.Count);
+            Assert.Equal(MatchRule.Plus, CaptureCauseOf(result, topNeighbour)!.Rule);
+            Assert.Equal(MatchRule.Plus, CaptureCauseOf(result, rightNeighbour)!.Rule);
+            Assert.Equal(MatchRule.SameWall, CaptureCauseOf(result, bottomNeighbour)!.Rule);
+            Assert.Equal(new[] { MatchRule.Plus, MatchRule.SameWall }, result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_WallRule_DoesNotStealCardsFromSame()
+        {
+            // SAME claims every tied opponent card, so by the time the wall phase runs there is nothing left
+            // for it to flip: the wall tie only raises the wall phase's tie count, and a rule that changed
+            // nothing must not be reported.
+            var playedCard = CreateCard(1, top: 5, right: 5, bottom: 1, left: 10);
+            var topNeighbour = CreatePlacement(TopNeighbourCard(2, bottom: 5), Player2, 0, 0);
+            var rightNeighbour = CreatePlacement(RightNeighbourCard(3, left: 5), Player2, 1, 1);
+
+            var result = PlayAt(
+                playedCard,
+                [topNeighbour, rightNeighbour],
+                0,
+                1,
+                MatchRule.Same,
+                MatchRule.SameWall
+            );
+
+            Assert.Equal(2, result.CapturedCards.Count);
+            Assert.Equal(MatchRule.Same, CaptureCauseOf(result, topNeighbour)!.Rule);
+            Assert.Equal(MatchRule.Same, CaptureCauseOf(result, rightNeighbour)!.Rule);
+            Assert.Equal(new[] { MatchRule.Same }, result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_Corner_SeesTwoWalls()
+        {
+            // A corner card touches the top and left walls and both of its sides there are A, so the walls
+            // alone supply the two ties: the single tied neighbour is enough to fire SAME WALL.
+            var playedCard = CreateCard(1, top: 10, right: 3, bottom: 1, left: 10);
+            var rightNeighbour = CreatePlacement(RightNeighbourCard(2, left: 3), Player2, 1, 0);
+
+            var result = PlayAt(playedCard, [rightNeighbour], 0, 0, MatchRule.SameWall);
+
+            Assert.Single(result.CapturedCards);
+            Assert.Same(rightNeighbour, result.CapturedCards[0]);
+            Assert.Equal(new[] { MatchRule.SameWall }, result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_SameWall_Flip_MovesScoresByTheFlippedCards()
+        {
+            var playedCard = CreateCard(1, top: 1, right: 5, bottom: 1, left: 10);
+            var rightNeighbour = CreatePlacement(RightNeighbourCard(2, left: 5), Player2, 1, 1);
+
+            var result = PlayAt(playedCard, [rightNeighbour], 0, 1, MatchRule.SameWall);
+
+            // P1: 5 (start) + 2 owned on board (played + 1 flipped) - 1 played = 6
+            // P2: 5 (start) + 0 owned on board - 1 played = 4
+            Assert.Equal(6, result.Player1Score);
+            Assert.Equal(4, result.Player2Score);
+        }
+
         private static GameLogicService.PlayCardResult PlayFourNeighborBoard(
             params MatchRule[] rules
         )
@@ -566,6 +771,22 @@ namespace TripleTriadApi.Tests.Services
 
             var result = GameLogic.PlayCard(match, placements, playedCard, Player1, 1, 1);
             return (result, ties, battleCaptures);
+        }
+
+        /// <summary>
+        /// Plays <paramref name="playedCard"/> at the given square and returns the result, so a test can put a
+        /// card on the board's edge or in a corner — where the wall rules (SAME WALL / PLUS WALL) apply.
+        /// </summary>
+        private static GameLogicService.PlayCardResult PlayAt(
+            Card playedCard,
+            List<CardPlacement> placements,
+            int x,
+            int y,
+            params MatchRule[] rules
+        )
+        {
+            var match = CreateMatch(rules);
+            return GameLogic.PlayCard(match, placements, playedCard, Player1, x, y);
         }
 
         /// <summary>

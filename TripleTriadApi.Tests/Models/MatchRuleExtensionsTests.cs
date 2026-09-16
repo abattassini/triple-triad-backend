@@ -45,6 +45,18 @@ namespace TripleTriadApi.Tests.Models
             Assert.Equal(new[] { "Same", "Plus" }, rules.ToNames());
         }
 
+        [Fact]
+        public void TryParseAll_AcceptsTheWallRules_WithoutTheirBaseRules()
+        {
+            // The wall rules are independent: SAME WALL can be enabled without SAME, and PLUS WALL without
+            // PLUS.
+            Assert.True(
+                MatchRuleExtensions.TryParseAll(new[] { "samewall", "PLUSWALL" }, out var rules)
+            );
+            Assert.Equal(new[] { MatchRule.SameWall, MatchRule.PlusWall }, rules);
+            Assert.Equal(new[] { "SameWall", "PlusWall" }, rules.ToNames());
+        }
+
         [Theory]
         [InlineData("None")] // there is no "none" rule: an empty list means no rules
         [InlineData("Combo")] // not implemented yet
@@ -65,6 +77,14 @@ namespace TripleTriadApi.Tests.Models
             Assert.Equal(new[] { "Same" }, new List<MatchRule> { MatchRule.Same }.ToNames());
             Assert.Equal(new[] { "Plus" }, new List<MatchRule> { MatchRule.Plus }.ToNames());
             Assert.Equal(
+                new[] { "SameWall" },
+                new List<MatchRule> { MatchRule.SameWall }.ToNames()
+            );
+            Assert.Equal(
+                new[] { "PlusWall" },
+                new List<MatchRule> { MatchRule.PlusWall }.ToNames()
+            );
+            Assert.Equal(
                 new[] { "Same" },
                 new List<MatchRule> { MatchRule.Same, MatchRule.Same }.ToNames()
             );
@@ -74,17 +94,31 @@ namespace TripleTriadApi.Tests.Models
         public void ToNames_OrdersByDeclaration_SoSamePrecedesPlus()
         {
             // The wire order decides which rule the client flashes first, so SAME has to be listed before
-            // PLUS no matter what order the enabled rules were parsed or stored in.
+            // PLUS — and both before the wall rules — no matter what order the enabled rules were parsed or
+            // stored in.
             Assert.Equal(
                 new[] { "Same", "Plus" },
                 new List<MatchRule> { MatchRule.Plus, MatchRule.Same }.ToNames()
+            );
+            Assert.Equal(
+                new[] { "Same", "Plus", "SameWall", "PlusWall" },
+                new List<MatchRule>
+                {
+                    MatchRule.PlusWall,
+                    MatchRule.SameWall,
+                    MatchRule.Plus,
+                    MatchRule.Same,
+                }.ToNames()
             );
         }
 
         [Fact]
         public void SupportedRuleNames_ListsEveryRule()
         {
-            Assert.Equal(new[] { "Same", "Plus" }, MatchRuleExtensions.SupportedRuleNames());
+            Assert.Equal(
+                new[] { "Same", "Plus", "SameWall", "PlusWall" },
+                MatchRuleExtensions.SupportedRuleNames()
+            );
         }
 
         [Fact]
@@ -95,6 +129,16 @@ namespace TripleTriadApi.Tests.Models
             Assert.Equal(
                 "Same,Plus",
                 new List<MatchRule> { MatchRule.Same, MatchRule.Plus }.ToStorageString()
+            );
+            Assert.Equal(
+                "Same,Plus,SameWall,PlusWall",
+                new List<MatchRule>
+                {
+                    MatchRule.Same,
+                    MatchRule.Plus,
+                    MatchRule.SameWall,
+                    MatchRule.PlusWall,
+                }.ToStorageString()
             );
 
             Assert.Empty(MatchRuleExtensions.ParseStorageString(null));
@@ -107,6 +151,10 @@ namespace TripleTriadApi.Tests.Models
             Assert.Equal(
                 new[] { MatchRule.Same, MatchRule.Plus },
                 MatchRuleExtensions.ParseStorageString("Same,Plus")
+            );
+            Assert.Equal(
+                new[] { MatchRule.SameWall, MatchRule.PlusWall },
+                MatchRuleExtensions.ParseStorageString("SameWall,PlusWall")
             );
         }
 
