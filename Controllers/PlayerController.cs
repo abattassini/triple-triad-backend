@@ -16,6 +16,7 @@ namespace TripleTriadApi.Controllers
     {
         private readonly IPlayerRepository _playerRepository;
         private readonly IPlayerCardRepository _playerCardRepository;
+        private readonly IPlayerPackRepository _playerPackRepository;
         private readonly IGameRepository _gameRepository;
         private readonly PasswordHasherService _passwordHasher;
         private readonly RegisterPlayerRequestValidator _registerValidator;
@@ -24,6 +25,7 @@ namespace TripleTriadApi.Controllers
         public PlayerController(
             IPlayerRepository playerRepository,
             IPlayerCardRepository playerCardRepository,
+            IPlayerPackRepository playerPackRepository,
             IGameRepository gameRepository,
             PasswordHasherService passwordHasher,
             RegisterPlayerRequestValidator registerValidator,
@@ -32,6 +34,7 @@ namespace TripleTriadApi.Controllers
         {
             _playerRepository = playerRepository;
             _playerCardRepository = playerCardRepository;
+            _playerPackRepository = playerPackRepository;
             _gameRepository = gameRepository;
             _passwordHasher = passwordHasher;
             _registerValidator = registerValidator;
@@ -73,7 +76,7 @@ namespace TripleTriadApi.Controllers
                     }
                 );
 
-                return StatusCode(201, ToProfile(player));
+                return StatusCode(201, await ToProfileAsync(player));
             }
             catch (Exception ex)
             {
@@ -113,7 +116,7 @@ namespace TripleTriadApi.Controllers
 
                 var token = _tokenService.IssueToken(player);
 
-                return Ok(new { token, player = ToProfile(player) });
+                return Ok(new { token, player = await ToProfileAsync(player) });
             }
             catch (Exception ex)
             {
@@ -142,7 +145,7 @@ namespace TripleTriadApi.Controllers
                     return NotFound(new { error = "Player not found" });
                 }
 
-                return Ok(ToProfile(player));
+                return Ok(await ToProfileAsync(player));
             }
             catch (Exception ex)
             {
@@ -260,9 +263,10 @@ namespace TripleTriadApi.Controllers
 
         /// <summary>
         /// Shared player projection used by register, sign-in and me so the frontend
-        /// always receives the same profile shape (including stats and avatar).
+        /// always receives the same profile shape (including stats, avatar and the two
+        /// shop counts the card/pack pills are drawn from).
         /// </summary>
-        private static object ToProfile(Player player) =>
+        private async Task<object> ToProfileAsync(Player player) =>
             new
             {
                 id = player.Id,
@@ -275,6 +279,13 @@ namespace TripleTriadApi.Controllers
                 losses = player.Losses,
                 ties = player.Ties,
                 avatarUrl = player.AvatarUrl,
+                // Counted here rather than on the client so every screen that already shows the profile has the
+                // numbers the pills need — no extra request per page, and no chance of the two disagreeing.
+                cardsOwned = await _playerCardRepository.GetOwnedCardCountAsync(player.Login),
+                packsOwned = await _playerPackRepository.GetCountAsync(
+                    player.Login,
+                    PackService.StandardPackCode
+                ),
             };
 
         /// <summary>

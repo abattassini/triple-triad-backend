@@ -62,6 +62,7 @@ else
 builder.Services.AddScoped<IGameRepository, GameRepository>();
 builder.Services.AddScoped<IPlayerRepository, PlayerRepository>();
 builder.Services.AddScoped<IPlayerCardRepository, PlayerCardRepository>();
+builder.Services.AddScoped<IPlayerPackRepository, PlayerPackRepository>();
 builder.Services.AddScoped<GameLogicService>();
 builder.Services.AddScoped<GamePlayService>();
 builder.Services.AddScoped<CardSeederService>();

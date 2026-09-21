@@ -7,12 +7,13 @@ using TripleTriadApi.Services;
 namespace TripleTriadApi.Tests.Services
 {
     /// <summary>
-    /// Tests for the card shop: the level weights and the odds table, the level-first pack draw, and the purchase
-    /// flow (charging coins, filing the cards and reporting what the pack did to the collection).
+    /// Tests for the card shop: the level weights and the odds table, the level-first pack draw, and the two-step
+    /// flow a purchase now is — <c>PurchaseAsync</c> charges the coins and grants a pack, <c>OpenAsync</c> consumes
+    /// that pack and files the five cards it held.
     ///
     /// The draw is driven by a scripted <see cref="IRandomSource"/>, and the repositories are the real ones over
-    /// an EF InMemory context, so the collection increments and the coin guard run exactly as they do in the app.
-    /// Two cards are seeded per level with ascending ids, so level L owns the ids <c>2L-1</c> and <c>2L</c>.
+    /// an EF InMemory context, so the collection increments and the coin/pack guards run exactly as they do in the
+    /// app. Two cards are seeded per level with ascending ids, so level L owns the ids <c>2L-1</c> and <c>2L</c>.
     /// </summary>
     public class PackServiceTests
     {
@@ -64,7 +65,7 @@ namespace TripleTriadApi.Tests.Services
                 new ScriptedRandom(Script([(0, 0), (579, 0), (580, 0), (4499, 0), (4899, 0)]))
             );
 
-            var result = await service.PurchaseAsync(PlayerLogin);
+            var result = await BuyAndOpenAsync(service);
 
             Assert.True(result.Succeeded);
             Assert.Equal(
@@ -81,7 +82,7 @@ namespace TripleTriadApi.Tests.Services
             await SeedPlayerAsync(context, coins: 2000);
             var service = CreateService(context, new ScriptedRandom(Script(FiveDrawsAt(4899, 0))));
 
-            var result = await service.PurchaseAsync(PlayerLogin);
+            var result = await BuyAndOpenAsync(service);
 
             Assert.All(result.Cards, packCard => Assert.Equal(10, packCard.Card.Level));
             Assert.All(result.Cards, packCard => Assert.Equal(19, packCard.Card.Id));
@@ -95,7 +96,7 @@ namespace TripleTriadApi.Tests.Services
             await SeedPlayerAsync(context, coins: 2000);
             var service = CreateService(context, new ScriptedRandom(Script(FiveDrawsAt(4899, 0))));
 
-            var result = await service.PurchaseAsync(PlayerLogin);
+            var result = await BuyAndOpenAsync(service);
 
             Assert.Equal(5, result.Cards.Count);
             Assert.All(result.Cards, packCard => Assert.Equal(19, packCard.Card.Id));
@@ -124,7 +125,7 @@ namespace TripleTriadApi.Tests.Services
 
             var service = CreateService(context, new ScriptedRandom(Script(FiveDrawsAt(4899, 0))));
 
-            var result = await service.PurchaseAsync(PlayerLogin);
+            var result = await BuyAndOpenAsync(service);
 
             Assert.False(result.Cards[0].IsNew);
             Assert.Equal(
@@ -139,7 +140,7 @@ namespace TripleTriadApi.Tests.Services
         }
 
         [Fact]
-        public async Task PurchasePack_ChargesExactlyThePackPrice()
+        public async Task PurchasePack_ChargesCoinsAndGrantsAPack_WithoutFilingCards()
         {
             using var context = CreateContext();
             await SeedCatalogueAsync(context, CreateCatalogue(Levels()));
@@ -152,6 +153,35 @@ namespace TripleTriadApi.Tests.Services
             Assert.Equal(2000 - PackService.PackPrice, result.CoinsAfter);
             Assert.Equal(500, result.CoinsAfter);
             Assert.Equal(500, (await context.Players.SingleAsync()).Coins);
+
+            // A purchase hands out a pack, not cards: nothing is drawn and the collection stays empty.
+            Assert.Equal(1, result.PacksOwned);
+            var stack = await context.PlayerPacks.SingleAsync();
+            Assert.Equal(PlayerLogin, stack.PlayerId);
+            Assert.Equal(PackService.StandardPackCode, stack.PackCode);
+            Assert.Equal(1, stack.Quantity);
+            Assert.Empty(context.PlayerCards);
+        }
+
+        [Fact]
+        public async Task PurchasePack_StacksThePackCode()
+        {
+            using var context = CreateContext();
+            await SeedCatalogueAsync(context, CreateCatalogue(Levels()));
+            await SeedPlayerAsync(context, coins: 3000);
+            var service = CreateService(context, new ScriptedRandom(Script(FiveDrawsAt(0, 0))));
+
+            var first = await service.PurchaseAsync(PlayerLogin);
+            var second = await service.PurchaseAsync(PlayerLogin);
+
+            Assert.Equal(1, first.PacksOwned);
+            Assert.Equal(2, second.PacksOwned);
+
+            // Two purchases of the same code share one row; the wallet is charged twice.
+            var stack = await context.PlayerPacks.SingleAsync();
+            Assert.Equal(2, stack.Quantity);
+            Assert.Equal(0, (await context.Players.SingleAsync()).Coins);
+            Assert.Empty(context.PlayerCards);
         }
 
         [Fact]
@@ -166,7 +196,8 @@ namespace TripleTriadApi.Tests.Services
 
             Assert.False(result.Succeeded);
             Assert.Contains(PackService.PackPrice.ToString(), result.ErrorMessage);
-            Assert.Empty(result.Cards);
+            Assert.Equal(0, result.PacksOwned);
+            Assert.Empty(context.PlayerPacks);
             Assert.Empty(context.PlayerCards);
             Assert.Equal(PackService.PackPrice - 1, (await context.Players.SingleAsync()).Coins);
         }
@@ -182,7 +213,7 @@ namespace TripleTriadApi.Tests.Services
 
             Assert.False(result.Succeeded);
             Assert.Equal("Player not found", result.ErrorMessage);
-            Assert.Empty(context.PlayerCards);
+            Assert.Empty(context.PlayerPacks);
         }
 
         [Fact]
@@ -195,7 +226,7 @@ namespace TripleTriadApi.Tests.Services
             var result = await service.PurchaseAsync(PlayerLogin);
 
             Assert.False(result.Succeeded);
-            Assert.Empty(result.Cards);
+            Assert.Empty(context.PlayerPacks);
             Assert.Empty(context.PlayerCards);
             Assert.Equal(2000, (await context.Players.SingleAsync()).Coins);
         }
@@ -213,7 +244,7 @@ namespace TripleTriadApi.Tests.Services
                 new ScriptedRandom(Script([(4399, 0), (2200, 0), (4399, 0), (2200, 0), (4399, 0)]))
             );
 
-            var result = await service.PurchaseAsync(PlayerLogin);
+            var result = await BuyAndOpenAsync(service);
 
             Assert.True(result.Succeeded);
             Assert.Equal(
@@ -235,7 +266,7 @@ namespace TripleTriadApi.Tests.Services
                 new ScriptedRandom(Script([(0, 0), (0, 0), (0, 1), (579, 1), (0, 0)]))
             );
 
-            var result = await service.PurchaseAsync(PlayerLogin);
+            var result = await BuyAndOpenAsync(service);
 
             Assert.Equal(5, result.Cards.Count);
             Assert.Equal(
@@ -251,6 +282,115 @@ namespace TripleTriadApi.Tests.Services
             Assert.Equal(3, stored[0].Quantity);
             Assert.Equal(2, stored[1].CardId);
             Assert.Equal(2, stored[1].Quantity);
+        }
+
+        [Fact]
+        public async Task OpenPack_ConsumesExactlyOnePack()
+        {
+            using var context = CreateContext();
+            await SeedCatalogueAsync(context, CreateCatalogue(Levels()));
+            await SeedPlayerAsync(context, coins: 0);
+            await GrantPackAsync(context, quantity: 2);
+            var service = CreateService(context, new ScriptedRandom(Script(FiveDrawsAt(0, 0))));
+
+            var result = await service.OpenAsync(PlayerLogin);
+
+            Assert.True(result.Succeeded);
+            Assert.Equal(PackService.StandardPackCode, result.PackCode);
+            Assert.Equal(1, result.PacksOwned);
+            Assert.Equal(5, result.Cards.Count);
+
+            // The stack came down by exactly one and the wallet was never touched — opening costs nothing.
+            var stack = await context.PlayerPacks.SingleAsync();
+            Assert.Equal(1, stack.Quantity);
+            Assert.Equal(0, (await context.Players.SingleAsync()).Coins);
+        }
+
+        [Fact]
+        public async Task OpenPack_WithNoPacks_FailsAndDrawsNothing()
+        {
+            // The scripted rng holds no values at all, so this also proves no roll was consumed.
+            using var context = CreateContext();
+            await SeedCatalogueAsync(context, CreateCatalogue(Levels()));
+            await SeedPlayerAsync(context, coins: 0);
+            var service = CreateService(context, new ScriptedRandom());
+
+            var result = await service.OpenAsync(PlayerLogin);
+
+            Assert.False(result.Succeeded);
+            Assert.Contains("pack", result.ErrorMessage);
+            Assert.Empty(result.Cards);
+            Assert.Empty(context.PlayerCards);
+        }
+
+        [Fact]
+        public async Task OpenPack_CannotDriveTheInventoryNegative()
+        {
+            // One pack, opened twice: the second open is rejected, because the guarded decrement is what stops a
+            // double click (or two racing requests) from conjuring a second pack.
+            using var context = CreateContext();
+            await SeedCatalogueAsync(context, CreateCatalogue(Levels()));
+            await SeedPlayerAsync(context, coins: 0);
+            await GrantPackAsync(context);
+            var service = CreateService(context, new ScriptedRandom(Script(FiveDrawsAt(0, 0))));
+
+            var first = await service.OpenAsync(PlayerLogin);
+            var second = await service.OpenAsync(PlayerLogin);
+
+            Assert.True(first.Succeeded);
+            Assert.Equal(0, first.PacksOwned);
+            Assert.False(second.Succeeded);
+            Assert.Empty(second.Cards);
+
+            // The emptied stack is removed rather than left behind at zero, and only one pack of cards was filed.
+            Assert.Empty(context.PlayerPacks);
+            Assert.Equal(5, await context.PlayerCards.SumAsync(playerCard => playerCard.Quantity));
+        }
+
+        [Fact]
+        public async Task OpenPack_WithAnEmptyCatalogue_KeepsThePack()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, coins: 0);
+            await GrantPackAsync(context);
+            var service = CreateService(context, new ScriptedRandom());
+
+            var result = await service.OpenAsync(PlayerLogin);
+
+            Assert.False(result.Succeeded);
+            Assert.Empty(result.Cards);
+            Assert.Equal(1, (await context.PlayerPacks.SingleAsync()).Quantity);
+            Assert.Empty(context.PlayerCards);
+        }
+
+        [Fact]
+        public async Task GetInventoryAsync_ReportsTheStacksAndTheProfileCount()
+        {
+            using var context = CreateContext();
+            await SeedCatalogueAsync(context, CreateCatalogue(Levels()));
+            await SeedPlayerAsync(context, coins: 0);
+            await GrantPackAsync(context, quantity: 3);
+            var service = CreateService(context, new ScriptedRandom());
+
+            var inventory = await service.GetInventoryAsync(PlayerLogin);
+
+            var entry = Assert.Single(inventory);
+            Assert.Equal(PackService.StandardPackCode, entry.Code);
+            Assert.Equal(PackService.StandardPackName, entry.Name);
+            Assert.Equal(PackService.CardsPerPack, entry.CardCount);
+            Assert.Equal(3, entry.Quantity);
+            Assert.Equal(3, await service.GetPackCountAsync(PlayerLogin));
+        }
+
+        [Fact]
+        public async Task GetPackCountAsync_IsZeroWithoutAPack()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, coins: 0);
+            var service = CreateService(context, new ScriptedRandom());
+
+            Assert.Equal(0, await service.GetPackCountAsync(PlayerLogin));
+            Assert.Empty(await service.GetInventoryAsync(PlayerLogin));
         }
 
         [Fact]
@@ -314,8 +454,39 @@ namespace TripleTriadApi.Tests.Services
                 new GameRepository(context),
                 new PlayerRepository(context),
                 new PlayerCardRepository(context),
+                new PlayerPackRepository(context),
                 random
             );
+
+        /// <summary>
+        /// The whole shop flow the UI performs in two steps: buy a pack, then open it. The purchase is asserted
+        /// here, so a broken grant can never silently turn a draw assertion green.
+        /// </summary>
+        private static async Task<PackService.OpenResult> BuyAndOpenAsync(PackService service)
+        {
+            var purchase = await service.PurchaseAsync(PlayerLogin);
+            Assert.True(purchase.Succeeded, purchase.ErrorMessage);
+            Assert.Equal(1, purchase.PacksOwned);
+
+            return await service.OpenAsync(PlayerLogin);
+        }
+
+        /// <summary>Grants a pack straight to the inventory, bypassing the purchase (the wallet stays untouched).</summary>
+        private static async Task GrantPackAsync(TripleTriadContext context, int quantity = 1)
+        {
+            context.PlayerPacks.Add(
+                new PlayerPack
+                {
+                    PlayerId = PlayerLogin,
+                    PackCode = PackService.StandardPackCode,
+                    Quantity = quantity,
+                    FirstAcquiredAt = DateTime.UtcNow.AddDays(-1),
+                    LastAcquiredAt = DateTime.UtcNow.AddDays(-1),
+                }
+            );
+
+            await context.SaveChangesAsync();
+        }
 
         private static async Task SeedCatalogueAsync(
             TripleTriadContext context,

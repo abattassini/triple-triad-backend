@@ -4,7 +4,9 @@ using TripleTriadApi.Repositories;
 namespace TripleTriadApi.Services
 {
     /// <summary>
-    /// The card shop: buys a card pack and files the cards in the player's collection.
+    /// The card shop, in two steps on purpose: <see cref="PurchaseAsync"/> charges the coins and puts a pack in the
+    /// player's inventory, and <see cref="OpenAsync"/> consumes one of those packs and files the cards it held in
+    /// the collection.
     ///
     /// A pack is drawn level-first: the level is picked with weight <c>600 - 20x</c> over the levels 1..10, so a
     /// level's chance is exactly <c>(600 - 20x) / 49</c> percent, and then a card of that level is picked
@@ -17,6 +19,11 @@ namespace TripleTriadApi.Services
         public const int PackPrice = 1500;
         public const int CardsPerPack = 5;
 
+        // The one pack the shop sells today. The inventory is keyed by this code (see Models/PlayerPack.cs), so a
+        // second pack type is a definition here plus its own row — not a schema or client-contract change.
+        public const string StandardPackCode = "standard";
+        public const string StandardPackName = "Standard Pack";
+
         // The level range the catalogue uses (see Card.MinLevel/MaxLevel), shared with the collection filter.
         public const int MinCardLevel = Card.MinLevel;
         public const int MaxCardLevel = Card.MaxLevel;
@@ -24,18 +31,21 @@ namespace TripleTriadApi.Services
         private readonly IGameRepository _gameRepository;
         private readonly IPlayerRepository _playerRepository;
         private readonly IPlayerCardRepository _playerCardRepository;
+        private readonly IPlayerPackRepository _playerPackRepository;
         private readonly IRandomSource _random;
 
         public PackService(
             IGameRepository gameRepository,
             IPlayerRepository playerRepository,
             IPlayerCardRepository playerCardRepository,
+            IPlayerPackRepository playerPackRepository,
             IRandomSource random
         )
         {
             _gameRepository = gameRepository;
             _playerRepository = playerRepository;
             _playerCardRepository = playerCardRepository;
+            _playerPackRepository = playerPackRepository;
             _random = random;
         }
 
@@ -49,17 +59,39 @@ namespace TripleTriadApi.Services
             IReadOnlyList<LevelOdds> LevelOdds
         );
 
+        /// <summary>One stack of unopened packs, as the inventory endpoint reports it.</summary>
+        public sealed record PackInventoryEntry(
+            string Code,
+            string Name,
+            int CardCount,
+            int Quantity
+        );
+
         /// <summary>A card the pack handed out, with the collection state that follows from it.</summary>
         public sealed record PackCard(Card Card, int QuantityOwned, bool IsNew);
 
+        /// <summary>What a purchase did: the new wallet balance and how many packs the player now holds.</summary>
         public sealed record PurchaseResult
         {
             public bool Succeeded { get; init; }
             public string? ErrorMessage { get; init; }
             public int CoinsAfter { get; init; }
-            public IReadOnlyList<PackCard> Cards { get; init; } = [];
+            public int PacksOwned { get; init; }
 
             public static PurchaseResult Failure(string message) =>
+                new() { Succeeded = false, ErrorMessage = message };
+        }
+
+        /// <summary>What opening a pack did: the cards it held and how many packs are left.</summary>
+        public sealed record OpenResult
+        {
+            public bool Succeeded { get; init; }
+            public string? ErrorMessage { get; init; }
+            public string PackCode { get; init; } = StandardPackCode;
+            public int PacksOwned { get; init; }
+            public IReadOnlyList<PackCard> Cards { get; init; } = [];
+
+            public static OpenResult Failure(string message) =>
                 new() { Succeeded = false, ErrorMessage = message };
         }
 
@@ -85,9 +117,35 @@ namespace TripleTriadApi.Services
             return new PackOffer(PackPrice, CardsPerPack, odds);
         }
 
+        /// <summary>The player's unopened packs — one entry per stack they hold, for the My Packs page.</summary>
+        public async Task<IReadOnlyList<PackInventoryEntry>> GetInventoryAsync(string playerId)
+        {
+            var stacks = await _playerPackRepository.GetForPlayerAsync(playerId);
+
+            return
+            [
+                .. stacks.Select(stack => new PackInventoryEntry(
+                    stack.PackCode,
+                    NameFor(stack.PackCode),
+                    CardsPerPack,
+                    stack.Quantity
+                )),
+            ];
+        }
+
+        /// <summary>How many unopened standard packs the player holds — the count the profile reports.</summary>
+        public Task<int> GetPackCountAsync(string playerId) =>
+            _playerPackRepository.GetCountAsync(playerId, StandardPackCode);
+
+        /// <summary>Display name for a pack code; an unknown code falls back to the code itself.</summary>
+        public static string NameFor(string packCode) =>
+            packCode == StandardPackCode ? StandardPackName : packCode;
+
         /// <summary>
-        /// Buys one pack for the player. The price is charged first, so a wallet that cannot afford it is
-        /// rejected before anything is granted, and only then are the five cards drawn and filed.
+        /// Buys one pack for the player. The price is charged first, so a wallet that cannot afford it is rejected
+        /// before anything is granted, and the pack is then added to the inventory. **No cards are drawn here** —
+        /// that happens when the player opens the pack (see <see cref="OpenAsync"/>), which is what lets the card
+        /// shop hand out packs instead of cards.
         /// </summary>
         public async Task<PurchaseResult> PurchaseAsync(string playerId)
         {
@@ -102,8 +160,9 @@ namespace TripleTriadApi.Services
                 return PurchaseResult.Failure("Player not found");
             }
 
-            var cardsByLevel = BuildLevelIndex(await _gameRepository.GetAllCardsAsync());
-            if (cardsByLevel.Count == 0)
+            // The catalogue is checked before the wallet is touched, so a shop with nothing to draw from can never
+            // charge for a pack it cannot fill later.
+            if (BuildLevelIndex(await _gameRepository.GetAllCardsAsync()).Count == 0)
             {
                 return PurchaseResult.Failure("No cards are available right now");
             }
@@ -112,6 +171,42 @@ namespace TripleTriadApi.Services
             if (coinsAfter is null)
             {
                 return PurchaseResult.Failure($"Not enough coins. A pack costs {PackPrice} coins.");
+            }
+
+            var stack = await _playerPackRepository.GrantAsync(playerId, StandardPackCode);
+
+            return new PurchaseResult
+            {
+                Succeeded = true,
+                CoinsAfter = coinsAfter.Value,
+                PacksOwned = stack.Quantity,
+            };
+        }
+
+        /// <summary>
+        /// Opens one of the player's packs: the pack is consumed first (a guarded decrement, so an empty inventory
+        /// is rejected before anything is drawn) and only then are the five cards drawn and filed in the
+        /// collection. The player receives the cards here, which is why the frontend's reveal is purely cosmetic.
+        /// </summary>
+        public async Task<OpenResult> OpenAsync(string playerId, string packCode = StandardPackCode)
+        {
+            if (string.IsNullOrEmpty(playerId))
+            {
+                return OpenResult.Failure("User not authenticated");
+            }
+
+            var cardsByLevel = BuildLevelIndex(await _gameRepository.GetAllCardsAsync());
+            if (cardsByLevel.Count == 0)
+            {
+                return OpenResult.Failure("No cards are available right now");
+            }
+
+            // Consume first: the draw below must never be able to eat a pack, and the guarded decrement is what
+            // stops two racing requests from opening the same pack twice.
+            var packsLeft = await _playerPackRepository.TryConsumeAsync(playerId, packCode);
+            if (packsLeft is null)
+            {
+                return OpenResult.Failure("You don't have any packs to open.");
             }
 
             // What the player owned before this pack. Both the "is new" set and the quantities are snapshotted
@@ -135,10 +230,11 @@ namespace TripleTriadApi.Services
                 cards.Add(new PackCard(card, quantityOwned, !previouslyOwned.Contains(card.Id)));
             }
 
-            return new PurchaseResult
+            return new OpenResult
             {
                 Succeeded = true,
-                CoinsAfter = coinsAfter.Value,
+                PackCode = packCode,
+                PacksOwned = packsLeft.Value,
                 Cards = cards,
             };
         }

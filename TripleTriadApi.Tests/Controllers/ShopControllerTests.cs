@@ -22,12 +22,14 @@ namespace TripleTriadApi.Tests.Controllers
         private const string PlayerLogin = "argel";
 
         [Fact]
-        public void GetPack_ReturnsTheOfferWithEveryLevel()
+        public async Task GetPack_ReturnsTheOfferWithEveryLevel()
         {
             using var context = CreateContext();
+            await SeedAsync(context, coins: 4000);
             var controller = CreateController(context, PlayerLogin);
+            await controller.PurchasePack();
 
-            var result = controller.GetPack();
+            var result = await controller.GetPack();
 
             var ok = Assert.IsType<OkObjectResult>(result.Result);
             using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
@@ -35,6 +37,9 @@ namespace TripleTriadApi.Tests.Controllers
 
             Assert.Equal(1500, root.GetProperty("price").GetInt32());
             Assert.Equal(5, root.GetProperty("cardCount").GetInt32());
+
+            // The offer reports what the caller already holds, so the shop page can say so without a second call.
+            Assert.Equal(1, root.GetProperty("packsOwned").GetInt32());
 
             var odds = root.GetProperty("levelOdds");
             Assert.Equal(10, odds.GetArrayLength());
@@ -46,7 +51,7 @@ namespace TripleTriadApi.Tests.Controllers
         }
 
         [Fact]
-        public async Task PurchasePack_WithEnoughCoins_ReturnsTheCardsAndTheNewBalance()
+        public async Task PurchasePack_WithEnoughCoins_ReturnsTheNewBalanceAndPackCount()
         {
             using var context = CreateContext();
             await SeedAsync(context, coins: 2000);
@@ -61,6 +66,35 @@ namespace TripleTriadApi.Tests.Controllers
             Assert.True(root.GetProperty("success").GetBoolean());
             Assert.Equal(PackService.PackPrice, root.GetProperty("price").GetInt32());
             Assert.Equal(500, root.GetProperty("coinsAfter").GetInt32());
+            Assert.Equal(1, root.GetProperty("packsOwned").GetInt32());
+
+            // The purchase hands out a pack, not cards: no `cards` field, nothing filed, one pack in the inventory.
+            Assert.False(root.TryGetProperty("cards", out _));
+            Assert.Empty(context.PlayerCards);
+
+            var stack = await context.PlayerPacks.SingleAsync();
+            Assert.Equal(PlayerLogin, stack.PlayerId);
+            Assert.Equal(PackService.StandardPackCode, stack.PackCode);
+            Assert.Equal(1, stack.Quantity);
+        }
+
+        [Fact]
+        public async Task OpenPack_ReturnsTheFiveCardsInTheShapeTheRevealReads()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context, coins: 2000);
+            var controller = CreateController(context, PlayerLogin);
+            await controller.PurchasePack();
+
+            var result = await controller.OpenPack(new OpenPackRequest());
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+            var root = json.RootElement;
+
+            Assert.True(root.GetProperty("success").GetBoolean());
+            Assert.Equal(PackService.StandardPackCode, root.GetProperty("packCode").GetString());
+            Assert.Equal(0, root.GetProperty("packsOwned").GetInt32());
 
             var cards = root.GetProperty("cards");
             Assert.Equal(PackService.CardsPerPack, cards.GetArrayLength());
@@ -77,13 +111,73 @@ namespace TripleTriadApi.Tests.Controllers
                 }
             );
 
-            // The drawn cards are filed: one row per distinct card of the pack.
+            // The pack is consumed and the cards are filed: one row per distinct card of the pack.
+            Assert.Empty(context.PlayerPacks);
+
             var distinctDrawnCards = cards
                 .EnumerateArray()
                 .Select(card => card.GetProperty("id").GetInt32())
                 .Distinct()
                 .Count();
             Assert.Equal(distinctDrawnCards, await context.PlayerCards.CountAsync());
+        }
+
+        [Fact]
+        public async Task OpenPack_WithNoPacks_Returns400()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context, coins: 2000);
+            var controller = CreateController(context, PlayerLogin);
+
+            var result = await controller.OpenPack(new OpenPackRequest());
+
+            var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(badRequest.Value));
+            Assert.Contains("pack", json.RootElement.GetProperty("error").GetString());
+            Assert.Empty(context.PlayerCards);
+        }
+
+        [Fact]
+        public async Task OpenPack_WithoutALogin_Returns401()
+        {
+            using var context = CreateContext();
+            var controller = CreateController(context, login: null);
+
+            var result = await controller.OpenPack(new OpenPackRequest());
+
+            Assert.IsType<UnauthorizedObjectResult>(result.Result);
+        }
+
+        [Fact]
+        public async Task GetInventory_ListsThePacksThePlayerHolds()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context, coins: 4000);
+            var controller = CreateController(context, PlayerLogin);
+            await controller.PurchasePack();
+            await controller.PurchasePack();
+
+            var result = await controller.GetInventory();
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+            var entry = Assert.Single(json.RootElement.EnumerateArray());
+
+            Assert.Equal(PackService.StandardPackCode, entry.GetProperty("code").GetString());
+            Assert.Equal(PackService.StandardPackName, entry.GetProperty("name").GetString());
+            Assert.Equal(PackService.CardsPerPack, entry.GetProperty("cardCount").GetInt32());
+            Assert.Equal(2, entry.GetProperty("quantity").GetInt32());
+        }
+
+        [Fact]
+        public async Task GetInventory_WithoutALogin_Returns401()
+        {
+            using var context = CreateContext();
+            var controller = CreateController(context, login: null);
+
+            var result = await controller.GetInventory();
+
+            Assert.IsType<UnauthorizedObjectResult>(result.Result);
         }
 
         [Fact]
@@ -99,6 +193,7 @@ namespace TripleTriadApi.Tests.Controllers
             using var json = JsonDocument.Parse(JsonSerializer.Serialize(badRequest.Value));
             Assert.Contains("1500", json.RootElement.GetProperty("error").GetString());
             Assert.Empty(context.PlayerCards);
+            Assert.Empty(context.PlayerPacks);
             Assert.Equal(100, (await context.Players.SingleAsync()).Coins);
         }
 
@@ -128,6 +223,7 @@ namespace TripleTriadApi.Tests.Controllers
                     new GameRepository(context),
                     new PlayerRepository(context),
                     new PlayerCardRepository(context),
+                    new PlayerPackRepository(context),
                     new SystemRandomSource()
                 )
             );

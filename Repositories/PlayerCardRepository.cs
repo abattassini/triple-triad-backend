@@ -25,6 +25,12 @@ namespace TripleTriadApi.Repositories
         Task<List<LevelOwnership>> GetLevelOwnershipAsync(string playerId);
 
         /// <summary>
+        /// How many distinct cards the player owns — one per holding, so extra copies of the same card do not
+        /// inflate it. This is the "cards" figure the player profile (and its stats pill) reports.
+        /// </summary>
+        Task<int> GetOwnedCardCountAsync(string playerId);
+
+        /// <summary>
         /// Files the drawn cards: +1 for a card the player already owns, a new row (quantity 1) otherwise.
         /// A card listed twice counts twice and still ends up in a single row.
         /// </summary>
@@ -72,6 +78,15 @@ namespace TripleTriadApi.Repositories
                     row.OwnedCopies
                 )),
             ];
+        }
+
+        public async Task<int> GetOwnedCardCountAsync(string playerId)
+        {
+            // One row per owned card (see the unique (PlayerId, CardId) index), so a plain row count is already
+            // the distinct-card count — copies live in Quantity and never add rows.
+            return await _context.PlayerCards.CountAsync(playerCard =>
+                playerCard.PlayerId == playerId
+            );
         }
 
         public async Task AddOrIncrementManyAsync(string playerId, IReadOnlyList<int> cardIds)

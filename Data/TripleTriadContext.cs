@@ -15,6 +15,7 @@ namespace TripleTriadApi.Data
         public DbSet<PlayerHand> PlayerHands { get; set; }
         public DbSet<Player> Players { get; set; }
         public DbSet<PlayerCard> PlayerCards { get; set; }
+        public DbSet<PlayerPack> PlayerPacks { get; set; }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
@@ -188,6 +189,19 @@ namespace TripleTriadApi.Data
                     .WithMany(c => c.PlayerCards)
                     .HasForeignKey(d => d.CardId)
                     .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // PlayerPack entity configuration (unopened packs the player owns)
+            modelBuilder.Entity<PlayerPack>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.PlayerId).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.PackCode).IsRequired().HasMaxLength(50);
+
+                // One row per pack code, so further purchases only raise the quantity.
+                entity.Property(e => e.Quantity).HasDefaultValue(1);
+
+                entity.HasIndex(e => new { e.PlayerId, e.PackCode }).IsUnique();
             });
         }
     }

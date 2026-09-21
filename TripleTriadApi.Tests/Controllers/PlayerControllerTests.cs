@@ -258,6 +258,47 @@ namespace TripleTriadApi.Tests.Controllers
             Assert.IsType<UnauthorizedObjectResult>(result.Result);
         }
 
+        [Fact]
+        public async Task Me_ReportsTheCardAndPackCounts()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, PlayerLogin);
+            await SeedPlayerAsync(context, "someone-else");
+
+            // Two distinct cards owned, one of them twice (copies must not inflate the count), plus a foreign row.
+            AddOwnedCard(context, PlayerLogin, cardId: 1, level: 1, quantity: 2);
+            AddOwnedCard(context, PlayerLogin, cardId: 5, level: 3, quantity: 1);
+            AddOwnedCard(context, "someone-else", cardId: 7, level: 3, quantity: 4);
+            context.PlayerPacks.Add(
+                new PlayerPack
+                {
+                    PlayerId = PlayerLogin,
+                    PackCode = PackService.StandardPackCode,
+                    Quantity = 3,
+                    FirstAcquiredAt = DateTime.UtcNow,
+                    LastAcquiredAt = DateTime.UtcNow,
+                }
+            );
+            await context.SaveChangesAsync();
+
+            var controller = CreateController(context, PlayerLogin);
+
+            var result = await controller.Me();
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+            var root = json.RootElement;
+
+            // The two figures the stats pills read: distinct cards (not copies) and unopened packs.
+            Assert.Equal(2, root.GetProperty("cardsOwned").GetInt32());
+            Assert.Equal(3, root.GetProperty("packsOwned").GetInt32());
+
+            // The rest of the profile is unchanged.
+            Assert.Equal(PlayerLogin, root.GetProperty("login").GetString());
+            Assert.True(root.TryGetProperty("coins", out _));
+            Assert.True(root.TryGetProperty("avatarUrl", out _));
+        }
+
         private static TripleTriadContext CreateContext() =>
             new(
                 new DbContextOptionsBuilder<TripleTriadContext>()
@@ -271,6 +312,7 @@ namespace TripleTriadApi.Tests.Controllers
             var controller = new PlayerController(
                 new PlayerRepository(context),
                 new PlayerCardRepository(context),
+                new PlayerPackRepository(context),
                 new GameRepository(context),
                 new PasswordHasherService(),
                 new RegisterPlayerRequestValidator(),
