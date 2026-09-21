@@ -16,8 +16,12 @@ namespace TripleTriadApi.Repositories
         /// <summary>How many packs of <paramref name="packCode"/> the player holds (0 when they hold none).</summary>
         Task<int> GetCountAsync(string playerId, string packCode);
 
-        /// <summary>Adds one pack of <paramref name="packCode"/>, creating the stack on the first purchase.</summary>
-        Task<PlayerPack> GrantAsync(string playerId, string packCode);
+        /// <summary>
+        /// Adds <paramref name="quantity"/> packs of <paramref name="packCode"/> — one for a purchase, or the
+        /// whole starting grant of a new account (<c>PackService.StartingPacks</c>) — creating the stack on the
+        /// first grant. The quantity is clamped to at least one, so an empty stack can never be stored.
+        /// </summary>
+        Task<PlayerPack> GrantAsync(string playerId, string packCode, int quantity = 1);
 
         /// <summary>
         /// Opens one pack: a guarded decrement returning the packs left, or <c>null</c> when the player holds
@@ -48,9 +52,10 @@ namespace TripleTriadApi.Repositories
                 .FirstOrDefaultAsync();
         }
 
-        public async Task<PlayerPack> GrantAsync(string playerId, string packCode)
+        public async Task<PlayerPack> GrantAsync(string playerId, string packCode, int quantity = 1)
         {
             var now = DateTime.UtcNow;
+            var granted = Math.Max(1, quantity);
             var stack = await _context.PlayerPacks.FirstOrDefaultAsync(pack =>
                 pack.PlayerId == playerId && pack.PackCode == packCode
             );
@@ -61,7 +66,7 @@ namespace TripleTriadApi.Repositories
                 {
                     PlayerId = playerId,
                     PackCode = packCode,
-                    Quantity = 1,
+                    Quantity = granted,
                     FirstAcquiredAt = now,
                     LastAcquiredAt = now,
                 };
@@ -70,7 +75,7 @@ namespace TripleTriadApi.Repositories
             }
             else
             {
-                stack.Quantity++;
+                stack.Quantity += granted;
                 stack.LastAcquiredAt = now;
             }
 

@@ -19,6 +19,11 @@ namespace TripleTriadApi.Services
         public const int PackPrice = 1500;
         public const int CardsPerPack = 5;
 
+        // What a brand-new account is given, so a collection can be started without playing a match first.
+        // Registration is the only grant that skips the coin charge, and because the packs are filled later (when
+        // they are opened) it needs no catalogue check either.
+        public const int StartingPacks = 6;
+
         // The one pack the shop sells today. The inventory is keyed by this code (see Models/PlayerPack.cs), so a
         // second pack type is a definition here plus its own row — not a schema or client-contract change.
         public const string StandardPackCode = "standard";

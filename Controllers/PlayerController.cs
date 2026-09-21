@@ -76,6 +76,14 @@ namespace TripleTriadApi.Controllers
                     }
                 );
 
+                // A new account starts with 0 cards and PackService.StartingPacks unopened packs, so the profile
+                // below already reports them and the Welcome page can send the player straight to opening them.
+                await _playerPackRepository.GrantAsync(
+                    player.Login,
+                    PackService.StandardPackCode,
+                    PackService.StartingPacks
+                );
+
                 return StatusCode(201, await ToProfileAsync(player));
             }
             catch (Exception ex)

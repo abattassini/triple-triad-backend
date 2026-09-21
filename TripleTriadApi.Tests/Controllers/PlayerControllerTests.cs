@@ -13,9 +13,10 @@ using TripleTriadApi.Validators;
 namespace TripleTriadApi.Tests.Controllers
 {
     /// <summary>
-    /// Tests for the collection endpoint the My Cards page reads (`GET api/player/cards`): the JSON shape that
-    /// page depends on, the level ordering it groups by, that only the caller's cards come back, the empty
-    /// collection, and the unauthenticated case.
+    /// Tests for the player endpoints the client reads: `register` (which hands a brand-new account its starting
+    /// inventory of 0 cards and six packs) and the collection the My Cards page reads
+    /// (`GET api/player/cards`) — the JSON shapes those screens depend on, the level ordering the collection groups
+    /// by, that only the caller's cards come back, the empty collection, and the unauthenticated cases.
     ///
     /// The controller is exercised directly with a hand-built <see cref="HttpContext"/> (same pattern as
     /// <c>ShopControllerTests</c>) over an EF InMemory database, so no web host is needed.
@@ -297,6 +298,41 @@ namespace TripleTriadApi.Tests.Controllers
             Assert.Equal(PlayerLogin, root.GetProperty("login").GetString());
             Assert.True(root.TryGetProperty("coins", out _));
             Assert.True(root.TryGetProperty("avatarUrl", out _));
+        }
+
+        [Fact]
+        public async Task Register_GrantsSixStartingPacksAndNoCards()
+        {
+            using var context = CreateContext();
+            var controller = CreateController(context, login: null);
+
+            var result = await controller.Register(
+                new RegisterPlayerRequest
+                {
+                    Login = "newcomer",
+                    Email = "newcomer@example.com",
+                    Password = "password1",
+                }
+            );
+
+            var created = Assert.IsType<ObjectResult>(result.Result);
+            Assert.Equal(201, created.StatusCode);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(created.Value));
+            var root = json.RootElement;
+
+            // The profile the client receives already carries the starting inventory, so no screen has to guess it.
+            Assert.Equal("newcomer", root.GetProperty("login").GetString());
+            Assert.Equal(0, root.GetProperty("coins").GetInt32());
+            Assert.Equal(0, root.GetProperty("cardsOwned").GetInt32());
+            Assert.Equal(6, PackService.StartingPacks);
+            Assert.Equal(PackService.StartingPacks, root.GetProperty("packsOwned").GetInt32());
+
+            // One stack of six, and not a single card: the cards are drawn when each pack is opened.
+            var stack = await context.PlayerPacks.SingleAsync();
+            Assert.Equal("newcomer", stack.PlayerId);
+            Assert.Equal(PackService.StandardPackCode, stack.PackCode);
+            Assert.Equal(PackService.StartingPacks, stack.Quantity);
+            Assert.Empty(context.PlayerCards);
         }
 
         private static TripleTriadContext CreateContext() =>
