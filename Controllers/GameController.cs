@@ -83,6 +83,31 @@ namespace TripleTriadApi.Controllers
             return User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
         }
 
+        /// <summary>
+        /// Why a match is abandoned when its player starts another one — the wording the other side reads in the
+        /// `MatchAbandoned` reason (the client renders it as "Match abandoned — …").
+        /// </summary>
+        private const string AbandonedByNewSearchReason = "the other player started another match";
+
+        /// <summary>
+        /// Gives up on every match the player is still in (`waiting` or `active`, in either seat) so that starting a
+        /// Quick Match is never refused because of an earlier one. The rows are abandoned rather than deleted — the
+        /// terminal status is a status write — and whoever was waiting on them is told through the same
+        /// `MatchAbandoned` push the timeout sweep sends, which is what stops the other side from waiting for a match
+        /// that will never be played.
+        /// </summary>
+        private async Task AbandonUnfinishedMatchesAsync(string playerId)
+        {
+            var unfinished = await _gameRepository.GetUnfinishedMatchesForPlayerAsync(playerId);
+
+            foreach (var match in unfinished)
+            {
+                match.Status = "abandoned";
+                await _gameRepository.UpdateMatchAsync(match);
+                await _notifier.AbandonedAsync(match.Id, AbandonedByNewSearchReason);
+            }
+        }
+
         [HttpGet("cards")]
         public async Task<ActionResult<List<Card>>> GetCards()
         {
@@ -102,19 +127,6 @@ namespace TripleTriadApi.Controllers
                 if (string.IsNullOrEmpty(playerId))
                 {
                     return Unauthorized(new { error = "User not authenticated" });
-                }
-
-                // Check if player already has an active match. A match whose deadline has passed is ignored: the sweep
-                // settles it within a tick, and a player who has waited long enough to search again must not be told
-                // they are still in a match.
-                var existingMatch = await _gameRepository.GetActiveMatchForPlayerAsync(playerId);
-                if (existingMatch is not null)
-                {
-                    var existingState = await _matchState.GetStateAsync(existingMatch, DateTime.UtcNow);
-                    if (!existingState.TimedOut)
-                    {
-                        return BadRequest(new { error = "Player already has an active match" });
-                    }
                 }
 
                 // Rules are optional; unknown names are rejected so a typo never silently creates a
@@ -169,6 +181,13 @@ namespace TripleTriadApi.Controllers
                     chosenHand = chosenRead.Hand;
                     hasChosenHand = true;
                 }
+
+                // Starting a Quick Match gives up on whatever the player was still in. This used to be a flat
+                // `400 "Player already has an active match"`, which left a player who walked away from a match — or
+                // whose opponent did — waiting for the sweep before they could search again. Everything they are in is
+                // abandoned instead, and the opposing side is told. Deliberately after the validation above, so a
+                // rejected request still writes nothing.
+                await AbandonUnfinishedMatchesAsync(playerId);
 
                 // Create new match with the requested rules
                 var match = await _gameRepository.CreateMatchAsync(playerId, opponent, rules);
@@ -571,6 +590,12 @@ namespace TripleTriadApi.Controllers
                 {
                     player2Hand = _gameLogic.GetRandomHand(allCards);
                 }
+
+                // The joiner is starting a Quick Match too, so their own unfinished matches are given up exactly as on
+                // create: a player may only ever be in one match at a time, and joining while an old one is still open
+                // would leave two. Like create, this sits after the validation above, so a rejected join writes
+                // nothing and the match being joined is left exactly as it was.
+                await AbandonUnfinishedMatchesAsync(playerId);
 
                 // Seat the second player and stamp the activation: the hand-pick timeout and the "nobody moved"
                 // timeout are both measured from here.

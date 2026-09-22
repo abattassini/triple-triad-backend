@@ -16,7 +16,14 @@ namespace TripleTriadApi.Repositories
 
         Task<Card?> GetCardByIdAsync(int cardId);
         Task<Match?> GetMatchByIdAsync(int matchId);
-        Task<Match?> GetActiveMatchForPlayerAsync(string playerId);
+
+        /// <summary>
+        /// Every match the player is still in — <c>waiting</c> or <c>active</c>, in either seat — oldest first.
+        /// Starting a Quick Match gives up on all of them (<c>GameController</c>), so this is the list that decides
+        /// what a new search abandons; nothing else is loaded with them, because only the status is written.
+        /// </summary>
+        Task<List<Match>> GetUnfinishedMatchesForPlayerAsync(string playerId);
+
         Task<Match> CreateMatchAsync(string player1Id, string? player2Id, List<MatchRule> rules);
         Task<Match> UpdateMatchAsync(Match match);
         Task UpdatePlayerHandAsync(PlayerHand playerHand);
@@ -96,17 +103,15 @@ namespace TripleTriadApi.Repositories
                 .FirstOrDefaultAsync(m => m.Id == matchId);
         }
 
-        public async Task<Match?> GetActiveMatchForPlayerAsync(string playerId)
+        public async Task<List<Match>> GetUnfinishedMatchesForPlayerAsync(string playerId)
         {
             return await _context
-                .Matches.Include(m => m.CardPlacements)
-                .ThenInclude(cp => cp.Card)
-                .Include(m => m.PlayerHands)
-                .ThenInclude(ph => ph.Card)
-                .FirstOrDefaultAsync(m =>
+                .Matches.Where(m =>
                     (m.Player1Id == playerId || m.Player2Id == playerId)
                     && (m.Status == "waiting" || m.Status == "active")
-                );
+                )
+                .OrderBy(m => m.CreatedAt)
+                .ToListAsync();
         }
 
         public async Task<Match> CreateMatchAsync(

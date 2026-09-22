@@ -677,6 +677,126 @@ namespace TripleTriadApi.Tests.Controllers
             Assert.Empty(notifier.Abandoned);
         }
 
+        [Fact]
+        public async Task CreateMatch_WithAnUnfinishedMatchOfTheirOwn_AbandonsItAndStartsTheNewOne()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context);
+            var stuckMatch = await SeedMatchAsync(context, PlayerLogin, OpponentLogin, "active");
+            var notifier = new RecordingMatchNotifier();
+            var controller = CreateController(context, PlayerLogin, notifier);
+
+            var result = await controller.CreateMatch(
+                new CreateMatchRequest { PickHandLater = true }
+            );
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+            var newMatchId = json.RootElement.GetProperty("match").GetProperty("Id").GetInt32();
+
+            // The search runs: what gives way is the old match, not the request (this used to be a 400, and the player
+            // stayed locked out until the sweep settled it).
+            Assert.NotEqual(stuckMatch.Id, newMatchId);
+            Assert.Equal("waiting", await StatusAsync(context, newMatchId));
+            Assert.Equal("abandoned", await StatusAsync(context, stuckMatch.Id));
+
+            // The abandoned match's other side is told through the same push a timeout sends.
+            var abandoned = Assert.Single(notifier.Abandoned);
+            Assert.Equal(stuckMatch.Id, abandoned.MatchId);
+            Assert.Contains("started another match", abandoned.Reason);
+
+            // And the player can search again as often as they like: what the next call gives up is the match the
+            // previous one created, never a 400.
+            notifier.Abandoned.Clear();
+            await controller.CreateMatch(new CreateMatchRequest { PickHandLater = true });
+
+            Assert.Equal("abandoned", await StatusAsync(context, newMatchId));
+            Assert.Equal(newMatchId, Assert.Single(notifier.Abandoned).MatchId);
+        }
+
+        [Fact]
+        public async Task CreateMatch_AbandonsOnlyThePlayersOwnUnfinishedMatches()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context);
+            var ownWaiting = await SeedMatchAsync(context, PlayerLogin, null, "waiting");
+            var finished = await SeedMatchAsync(context, PlayerLogin, OpponentLogin, "completed");
+            var someoneElses = await SeedMatchAsync(
+                context,
+                OpponentLogin,
+                StrangerLogin,
+                "active"
+            );
+            var notifier = new RecordingMatchNotifier();
+            var controller = CreateController(context, PlayerLogin, notifier);
+
+            await controller.CreateMatch(new CreateMatchRequest { PickHandLater = true });
+
+            // Our own waiting match goes too: it is a match the player cannot play any more, and leaving it in the
+            // queue would hand a ghost to whoever joined it.
+            Assert.Equal("abandoned", await StatusAsync(context, ownWaiting.Id));
+            Assert.Equal(ownWaiting.Id, Assert.Single(notifier.Abandoned).MatchId);
+
+            // A match that is over, and a match the player is not in, are none of this search's business.
+            Assert.Equal("completed", await StatusAsync(context, finished.Id));
+            Assert.Equal("active", await StatusAsync(context, someoneElses.Id));
+        }
+
+        [Fact]
+        public async Task CreateMatch_WithARejectedHand_LeavesTheirUnfinishedMatchAlone()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context);
+            var active = await SeedMatchAsync(context, PlayerLogin, OpponentLogin, "active");
+            var notifier = new RecordingMatchNotifier();
+            var controller = CreateController(context, PlayerLogin, notifier);
+
+            var result = await controller.CreateMatch(
+                new CreateMatchRequest { CardIds = [1, 2, 3, 4] }
+            );
+            Assert.IsType<BadRequestObjectResult>(result.Result);
+
+            // Validation comes first: a request that could never have started a match gives nothing up.
+            Assert.Equal("active", await StatusAsync(context, active.Id));
+            Assert.Empty(notifier.Abandoned);
+            Assert.Single(context.Matches);
+        }
+
+        [Fact]
+        public async Task JoinMatch_WithAnUnfinishedMatchOfTheirOwn_AbandonsItFirst()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context);
+            // The player is in the old match as the second seat: both seats count, not just the creator's.
+            var oldMatch = await SeedMatchAsync(context, OpponentLogin, PlayerLogin, "active");
+            var waiting = await SeedMatchAsync(context, StrangerLogin, null, "waiting");
+            var notifier = new RecordingMatchNotifier();
+            var joiner = CreateController(context, PlayerLogin, notifier);
+
+            var result = await joiner.JoinMatch(
+                waiting.Id,
+                new JoinMatchRequest { PickHandLater = true }
+            );
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+            Assert.Equal(
+                "active",
+                json.RootElement.GetProperty("match").GetProperty("Status").GetString()
+            );
+
+            // Joining is starting a match too: the old one is given up, so the player is never in two at once.
+            Assert.Equal("abandoned", await StatusAsync(context, oldMatch.Id));
+            Assert.Equal(oldMatch.Id, Assert.Single(notifier.Abandoned).MatchId);
+        }
+
+        /// <summary>The row's status as it now stands in the store — the settle a start wrote.</summary>
+        private static async Task<string> StatusAsync(TripleTriadContext context, int matchId) =>
+            await context
+                .Matches.Where(match => match.Id == matchId)
+                .Select(match => match.Status)
+                .SingleAsync();
+
         /// <summary>`handsReady`/`timedOut`/status as the SelectHand step reads them off `GET api/game/match/{id}`.</summary>
         private static async Task<(string Status, bool HandsReady, bool TimedOut)> ReadStateAsync(
             GameController controller,
@@ -747,6 +867,36 @@ namespace TripleTriadApi.Tests.Controllers
             };
 
             return controller;
+        }
+
+        /// <summary>
+        /// A match row as the game layer would leave it, for the tests that start from a player who is already in one:
+        /// `waiting` (nobody joined) or `active` (both seats taken). <paramref name="player2Id"/> null is the empty
+        /// second seat a waiting match has.
+        /// </summary>
+        private static async Task<Match> SeedMatchAsync(
+            TripleTriadContext context,
+            string player1Id,
+            string? player2Id,
+            string status
+        )
+        {
+            var match = new Match
+            {
+                Player1Id = player1Id,
+                Player2Id = player2Id ?? string.Empty,
+                CurrentPlayerTurn = player1Id,
+                Status = status,
+                Player1Score = 5,
+                Player2Score = 5,
+                CreatedAt = DateTime.UtcNow,
+                ActivatedAt = status == "active" ? DateTime.UtcNow : null,
+            };
+
+            context.Matches.Add(match);
+            await context.SaveChangesAsync();
+
+            return match;
         }
 
         /// <summary>

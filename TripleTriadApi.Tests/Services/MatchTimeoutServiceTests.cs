@@ -44,9 +44,9 @@ namespace TripleTriadApi.Tests.Services
 
             Assert.Equal("abandoned", await StatusOfAsync(context, match.Id));
 
-            // Out of the waiting list, and out of its creator's way: the guard that blocks a new search sees nothing.
+            // Out of the waiting list, and out of its creator's way: what a new search gives up on is now empty.
             Assert.Empty(await gameRepository.GetWaitingMatchesAsync());
-            Assert.Null(await gameRepository.GetActiveMatchForPlayerAsync(PlayerOne));
+            Assert.Empty(await gameRepository.GetUnfinishedMatchesForPlayerAsync(PlayerOne));
 
             var abandoned = Assert.Single(notifier.Abandoned);
             Assert.Equal(match.Id, abandoned.MatchId);
