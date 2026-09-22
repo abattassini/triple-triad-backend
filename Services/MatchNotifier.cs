@@ -4,10 +4,21 @@ using TripleTriadApi.Models;
 
 namespace TripleTriadApi.Services
 {
+    /// <summary>One move the server played on a client's behalf — everything the pushes need to describe it.</summary>
+    public sealed record MovePush(
+        Match Match,
+        GameLogicService.PlayCardResult Result,
+        MatchRewardService.MatchRewardResult? Rewards,
+        string PlayerId,
+        int CardId,
+        int X,
+        int Y
+    );
+
     /// <summary>
     /// The pushes a match needs from outside the hub: the hub only broadcasts what happens inside a connection, while
-    /// filing a hand, cancelling a match and the timeout sweep all run in a REST request or a background job. It is an
-    /// interface because tests have no web host — they record the calls instead.
+    /// filing a hand, cancelling a match, the timeout sweep and the CPU's own moves all run in a REST request or a
+    /// background job. It is an interface because tests have no web host — they record the calls instead.
     /// </summary>
     public interface IMatchNotifier
     {
@@ -23,6 +34,12 @@ namespace TripleTriadApi.Services
             MatchRewardService.MatchRewardResult? rewards,
             string reason
         );
+
+        /// <summary>
+        /// A move the server played for a client (the CPU): the same `CardPlayed` the hub sends for a human move, plus
+        /// `GameCompleted` when that move filled the board.
+        /// </summary>
+        Task CardPlayedAsync(MovePush move);
     }
 
     public class SignalRMatchNotifier(IHubContext<GameHub> hub) : IMatchNotifier
@@ -42,28 +59,29 @@ namespace TripleTriadApi.Services
         ) =>
             _hub
                 .Clients.Group(GroupOf(match.Id))
-                .SendAsync(
-                    "GameCompleted",
-                    new
-                    {
-                        winnerId = match.WinnerId,
-                        player1Score = match.Player1Score,
-                        player2Score = match.Player2Score,
-                        completedAt = match.CompletedAt,
-                        // Absent on a played-out match, so clients can tell a forfeit from a finished game.
-                        reason,
-                        rewards =
-                            rewards is null
-                                ? null
-                                : new
-                                {
-                                    player1Coins = rewards.Player1Coins,
-                                    player1Experience = rewards.Player1Experience,
-                                    player2Coins = rewards.Player2Coins,
-                                    player2Experience = rewards.Player2Experience,
-                                },
-                    }
-                );
+                .SendAsync("GameCompleted", MatchPushes.Completed(match, rewards, reason));
+
+        public async Task CardPlayedAsync(MovePush move)
+        {
+            var group = _hub.Clients.Group(GroupOf(move.Match.Id));
+
+            await group.SendAsync(
+                "CardPlayed",
+                MatchPushes.CardPlayed(
+                    move.Match,
+                    move.Result,
+                    move.PlayerId,
+                    move.CardId,
+                    move.X,
+                    move.Y
+                )
+            );
+
+            if (move.Result.IsGameComplete)
+            {
+                await group.SendAsync("GameCompleted", MatchPushes.Completed(move.Match, move.Rewards));
+            }
+        }
 
         private static string GroupOf(int matchId) => $"match-{matchId}";
     }

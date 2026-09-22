@@ -79,57 +79,26 @@ namespace TripleTriadApi.Hubs
             Console.WriteLine("✅ PlayCard succeeded, broadcasting to group...");
 
             // Notify all players in the match about the successful move
-            await Clients
-                .Group($"match-{matchId}")
-                .SendAsync(
-                    "CardPlayed",
-                    new
-                    {
-                        playerId,
-                        cardId,
-                        x,
-                        y,
-                        capturedCards = result.GameResult!.CapturedCards.Select(c => new
-                        {
-                            id = c.Id,
-                            x = c.X,
-                            y = c.Y,
-                            newOwner = playerId,
-                        }),
-                        triggeredRules = result.GameResult.TriggeredRules.ToNames(),
-                        player1Score = result.GameResult.Player1Score,
-                        player2Score = result.GameResult.Player2Score,
-                        currentPlayer = result.UpdatedMatch!.CurrentPlayerTurn,
-                        isGameComplete = result.GameResult.IsGameComplete,
-                        winnerId = result.GameResult.WinnerId,
-                    }
-                );
-            ;
+            var group = Clients.Group($"match-{matchId}");
 
-            if (result.GameResult.IsGameComplete)
+            await group.SendAsync(
+                "CardPlayed",
+                MatchPushes.CardPlayed(
+                    result.UpdatedMatch!,
+                    result.GameResult!,
+                    playerId,
+                    cardId,
+                    x,
+                    y
+                )
+            );
+
+            if (result.GameResult!.IsGameComplete)
             {
-                await Clients
-                    .Group($"match-{matchId}")
-                    .SendAsync(
-                        "GameCompleted",
-                        new
-                        {
-                            winnerId = result.GameResult.WinnerId,
-                            player1Score = result.GameResult.Player1Score,
-                            player2Score = result.GameResult.Player2Score,
-                            completedAt = result.UpdatedMatch.CompletedAt,
-                            rewards =
-                                result.Rewards is null
-                                    ? null
-                                    : new
-                                    {
-                                        player1Coins = result.Rewards.Player1Coins,
-                                        player1Experience = result.Rewards.Player1Experience,
-                                        player2Coins = result.Rewards.Player2Coins,
-                                        player2Experience = result.Rewards.Player2Experience,
-                                    },
-                        }
-                    );
+                await group.SendAsync(
+                    "GameCompleted",
+                    MatchPushes.Completed(result.UpdatedMatch!, result.Rewards)
+                );
             }
         }
 

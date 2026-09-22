@@ -708,6 +708,302 @@ namespace TripleTriadApi.Tests.Services
             Assert.Equal(4, result.Player2Score);
         }
 
+        [Fact]
+        public void PlayCard_Same_FlipsTheTiedNeighboursOnly_NotTheirNeighbours()
+        {
+            // P1's centre card ties with the card above it (5 vs 5) and the card to its left (5 vs 5), so SAME fires
+            // and flips both. The card above it beats the card to its right (9 > 1): if a flipped card chained, that
+            // one would flip too — SAME does not chain (COMBO is the rule that does, and this match has no COMBO).
+            var playedCard = CreateCard(1, top: 5, right: 1, bottom: 1, left: 5);
+            var tiedAbove = CreatePlacement(
+                CreateCard(2, top: 1, right: 9, bottom: 5, left: 1),
+                Player2,
+                1,
+                0
+            );
+            var tiedLeft = CreatePlacement(
+                CreateCard(3, top: 1, right: 5, bottom: 1, left: 1),
+                Player2,
+                0,
+                1
+            );
+            var beyondTheTie = CreatePlacement(CreateCard(4, 1, 1, 1, 1), Player2, 2, 0);
+
+            var result = PlayAt(
+                playedCard,
+                [tiedAbove, tiedLeft, beyondTheTie],
+                1,
+                1,
+                MatchRule.Same
+            );
+
+            Assert.Equal(2, result.CapturedCards.Count);
+            Assert.Contains(tiedAbove, result.CapturedCards);
+            Assert.Contains(tiedLeft, result.CapturedCards);
+            Assert.DoesNotContain(beyondTheTie, result.CapturedCards);
+
+            // Exactly the two that flipped changed hands, and the scores count exactly those two captures.
+            Assert.Equal(Player1, tiedAbove.Owner);
+            Assert.Equal(Player1, tiedLeft.Owner);
+            Assert.Equal(Player2, beyondTheTie.Owner);
+            Assert.Equal(new[] { MatchRule.Same }, result.TriggeredRules);
+            Assert.Equal(7, result.Player1Score);
+            Assert.Equal(3, result.Player2Score);
+        }
+
+        [Fact]
+        public void PlayCard_Plus_FlipsTheMatchingNeighboursOnly_NotTheirNeighbours()
+        {
+            // 3 + 8 and 4 + 7 both make 11, with neither collision tying or winning on rank, so PLUS alone flips the
+            // card above and the card to the left. The card above beats the one to its right (9 > 1), which a chain
+            // would flip as well.
+            var playedCard = CreateCard(1, top: 3, right: 1, bottom: 1, left: 4);
+            var matchingAbove = CreatePlacement(
+                CreateCard(2, top: 1, right: 9, bottom: 8, left: 1),
+                Player2,
+                1,
+                0
+            );
+            var matchingLeft = CreatePlacement(
+                CreateCard(3, top: 1, right: 7, bottom: 1, left: 1),
+                Player2,
+                0,
+                1
+            );
+            var beyondTheSum = CreatePlacement(CreateCard(4, 1, 1, 1, 1), Player2, 2, 0);
+
+            var result = PlayAt(
+                playedCard,
+                [matchingAbove, matchingLeft, beyondTheSum],
+                1,
+                1,
+                MatchRule.Plus
+            );
+
+            Assert.Equal(2, result.CapturedCards.Count);
+            Assert.Contains(matchingAbove, result.CapturedCards);
+            Assert.Contains(matchingLeft, result.CapturedCards);
+            Assert.DoesNotContain(beyondTheSum, result.CapturedCards);
+            Assert.Equal(Player1, matchingAbove.Owner);
+            Assert.Equal(Player1, matchingLeft.Owner);
+            Assert.Equal(Player2, beyondTheSum.Owner);
+            Assert.Equal(new[] { MatchRule.Plus }, result.TriggeredRules);
+            Assert.Equal(7, result.Player1Score);
+            Assert.Equal(3, result.Player2Score);
+        }
+
+        [Fact]
+        public void PlayCard_StrictWin_DoesNotChainFromTheCapturedCard()
+        {
+            // The same invariant for the phase before the rules: a plain battle capture (9 > 2, no rules enabled)
+            // never cascades into the cards the captured card could beat (its right 9 > the neighbour's left 1).
+            var playedCard = CreateCard(1, top: 9, right: 1, bottom: 1, left: 1);
+            var beaten = CreatePlacement(
+                CreateCard(2, top: 1, right: 9, bottom: 2, left: 1),
+                Player2,
+                1,
+                0
+            );
+            var beyondTheWin = CreatePlacement(CreateCard(3, 1, 1, 1, 1), Player2, 2, 0);
+
+            var result = PlayAt(playedCard, [beaten, beyondTheWin], 1, 1);
+
+            Assert.Same(beaten, Assert.Single(result.CapturedCards));
+            Assert.Equal(Player1, beaten.Owner);
+            Assert.Equal(Player2, beyondTheWin.Owner);
+            Assert.Empty(result.TriggeredRules);
+        }
+
+        [Fact]
+        public void PlayCard_SameWall_FlipsTheWallTiedNeighbourOnly_NotItsNeighbours()
+        {
+            // From the top-left corner P1's left side faces the wall, which counts as an A (10) and ties with the
+            // played 10, while the bottom side ties with the card below (5 vs 5) — two ties, so SAME WALL fires and
+            // flips that neighbour (the wall itself has no card, so it is never captured). The card below beats the
+            // one to its right (9 > 1), which a chain would flip too.
+            var playedCard = CreateCard(1, top: 1, right: 1, bottom: 5, left: 10);
+            var wallTied = CreatePlacement(
+                CreateCard(2, top: 5, right: 9, bottom: 1, left: 1),
+                Player2,
+                0,
+                1
+            );
+            var beyondTheTie = CreatePlacement(CreateCard(3, 1, 1, 1, 1), Player2, 1, 1);
+
+            var result = PlayAt(playedCard, [wallTied, beyondTheTie], 0, 0, MatchRule.SameWall);
+
+            Assert.Same(wallTied, Assert.Single(result.CapturedCards));
+            Assert.Equal(Player1, wallTied.Owner);
+            Assert.Equal(Player2, beyondTheTie.Owner);
+            Assert.Equal(new[] { MatchRule.SameWall }, result.TriggeredRules);
+            Assert.Equal(6, result.Player1Score);
+            Assert.Equal(4, result.Player2Score);
+        }
+
+        [Fact]
+        public void PlayCard_PlusWall_FlipsTheWallSummedNeighbourOnly_NotItsNeighbours()
+        {
+            // The same corner: the wall on the left sums to 5 + 10 with the played card's left 5, and the card below
+            // sums to 5 + 10 with its top 10 — the same sum, so PLUS WALL fires and flips that neighbour. The card
+            // below beats the one to its right (9 > 1), which a chain would flip too.
+            var playedCard = CreateCard(1, top: 1, right: 1, bottom: 5, left: 5);
+            var wallSummed = CreatePlacement(
+                CreateCard(2, top: 10, right: 9, bottom: 1, left: 1),
+                Player2,
+                0,
+                1
+            );
+            var beyondTheSum = CreatePlacement(CreateCard(3, 1, 1, 1, 1), Player2, 1, 1);
+
+            var result = PlayAt(playedCard, [wallSummed, beyondTheSum], 0, 0, MatchRule.PlusWall);
+
+            Assert.Same(wallSummed, Assert.Single(result.CapturedCards));
+            Assert.Equal(Player1, wallSummed.Owner);
+            Assert.Equal(Player2, beyondTheSum.Owner);
+            Assert.Equal(new[] { MatchRule.PlusWall }, result.TriggeredRules);
+            Assert.Equal(6, result.Player1Score);
+            Assert.Equal(4, result.Player2Score);
+        }
+
+        /// <summary>
+        /// The odds table of the CPU's opening hand: weight <c>level²</c> over the levels 1..10, so level 10 owns
+        /// 25.97% of a slot and level 1 0.26%. Rising weights are what makes the hand come out strong — a flat draw
+        /// would leave it at the catalogue's own level 5.6.
+        /// </summary>
+        [Fact]
+        public void GetCpuHand_LevelWeights_ClimbWithTheSquareOfTheLevel()
+        {
+            var weights = Enumerable
+                .Range(Card.MinLevel, Card.MaxLevel - Card.MinLevel + 1)
+                .Select(CpuOpponent.HandLevelWeight)
+                .ToList();
+
+            Assert.Equal(new[] { 1, 4, 9, 16, 25, 36, 49, 64, 81, 100 }, weights);
+            Assert.Equal(weights.Sum(), CpuOpponent.TotalHandLevelWeight);
+            Assert.Equal(385, CpuOpponent.TotalHandLevelWeight);
+
+            var total = CpuOpponent.TotalHandLevelWeight;
+            Assert.Equal(25.97, Math.Round(weights[9] * 100.0 / total, 2));
+            Assert.Equal(0.26, Math.Round(weights[0] * 100.0 / total, 2));
+        }
+
+        /// <summary>
+        /// The level walk itself, pinned to the table: with one card per level the first slot's level is decided by
+        /// the rng value alone, so these cases are exactly the cumulative boundaries of 1+4+9+…+100 = 385 slots.
+        /// </summary>
+        [Theory]
+        [InlineData(0, 1)] // level 1 owns slot 0 (weight 1)
+        [InlineData(1, 2)] // level 2 owns slots 1..4 (weight 4)
+        [InlineData(4, 2)]
+        [InlineData(5, 3)] // level 3 owns slots 5..13 (weight 9)
+        [InlineData(13, 3)]
+        [InlineData(14, 4)] // level 4 owns slots 14..29 (weight 16)
+        [InlineData(29, 4)]
+        [InlineData(30, 5)] // level 5 owns slots 30..54 (weight 25)
+        [InlineData(54, 5)]
+        [InlineData(55, 6)] // level 6 owns slots 55..90 (weight 36)
+        [InlineData(90, 6)]
+        [InlineData(91, 7)] // level 7 owns slots 91..139 (weight 49)
+        [InlineData(139, 7)]
+        [InlineData(140, 8)] // level 8 owns slots 140..203 (weight 64)
+        [InlineData(203, 8)]
+        [InlineData(204, 9)] // level 9 owns slots 204..284 (weight 81)
+        [InlineData(284, 9)]
+        [InlineData(285, 10)] // level 10 owns slots 285..384 (weight 100)
+        [InlineData(384, 10)]
+        public void GetCpuHand_FirstSlot_FollowsTheLevelTable(int pick, int expectedLevel)
+        {
+            var random = new ScriptedRandom(pick);
+
+            var hand = GameLogic.GetCpuHand(OneCardPerLevelCatalogue(), random);
+
+            Assert.Equal(CpuOpponent.TotalHandLevelWeight, random.Bounds[0]);
+            Assert.Equal(expectedLevel, hand[0].Level);
+        }
+
+        /// <summary>The level is drawn first, then the card inside it — the level pick is the draw's first call.</summary>
+        [Fact]
+        public void GetCpuHand_PicksTheCardWithinTheChosenLevel()
+        {
+            // Levels 10 and 1 only, so the 101 slots are level 10's 100 and then level 1's single one.
+            var catalogue = new List<Card>
+            {
+                LevelCard(1, 10),
+                LevelCard(2, 10),
+                LevelCard(3, 10),
+                LevelCard(4, 1),
+                LevelCard(5, 1),
+                LevelCard(6, 1),
+            };
+            var random = new ScriptedRandom(1, 1);
+
+            var hand = GameLogic.GetCpuHand(catalogue, random);
+
+            Assert.Equal(2, hand[0].Id); // the second of level 10's three cards
+            Assert.Equal(GameLogicService.HandSize, hand.Count);
+            Assert.Equal(hand.Count, hand.Select(card => card.Id).Distinct().Count());
+        }
+
+        /// <summary>
+        /// Top of the range every time: the hand walks down the levels, and a level leaves the draw as soon as its
+        /// cards are used — which is what stops a strong-but-thin level from filling a whole hand.
+        /// </summary>
+        [Fact]
+        public void GetCpuHand_TopOfEveryRange_BringsTheStrongestLevelsLeft()
+        {
+            var hand = GameLogic.GetCpuHand(OneCardPerLevelCatalogue(), new ScriptedRandom());
+
+            Assert.Equal(new[] { 10, 9, 8, 7, 6 }, hand.Select(card => card.Level));
+        }
+
+        /// <summary>The mirror image: the bottom of every range walks up the levels instead.</summary>
+        [Fact]
+        public void GetCpuHand_BottomOfEveryRange_BringsTheWeakestLevelsLeft()
+        {
+            var random = new ScriptedRandom(0, 0, 0, 0, 0, 0, 0, 0, 0, 0); // one value per call, ten calls
+
+            var hand = GameLogic.GetCpuHand(OneCardPerLevelCatalogue(), random);
+
+            Assert.Equal(new[] { 1, 2, 3, 4, 5 }, hand.Select(card => card.Level));
+        }
+
+        /// <summary>
+        /// The weights are summed over the levels the catalogue has, not over all ten: with no level 10 the top of
+        /// the range is level 9, and a level-1 card is still only one of the 82 slots.
+        /// </summary>
+        [Fact]
+        public void GetCpuHand_RenormalisesOverTheLevelsTheCatalogueHas()
+        {
+            var catalogue = new List<Card>
+            {
+                LevelCard(1, 1),
+                LevelCard(2, 9),
+                LevelCard(3, 9),
+                LevelCard(4, 9),
+                LevelCard(5, 9),
+                LevelCard(6, 9),
+            };
+            var random = new ScriptedRandom();
+
+            var hand = GameLogic.GetCpuHand(catalogue, random);
+
+            Assert.Equal(1 + CpuOpponent.HandLevelWeight(9), random.Bounds[0]);
+            Assert.Equal(GameLogicService.HandSize, hand.Count);
+            Assert.All(hand, card => Assert.Equal(9, card.Level));
+        }
+
+        /// <summary>A catalogue smaller than a hand yields what it has — no draw runs past the end of a pool.</summary>
+        [Fact]
+        public void GetCpuHand_WithFewerCardsThanAHand_TakesThemAll()
+        {
+            var catalogue = new List<Card> { LevelCard(1, 4), LevelCard(2, 4), LevelCard(3, 9) };
+
+            var hand = GameLogic.GetCpuHand(catalogue, new ScriptedRandom());
+
+            Assert.Equal(3, hand.Count);
+            Assert.All(hand, card => Assert.Contains(card, catalogue));
+        }
+
         private static GameLogicService.PlayCardResult PlayFourNeighborBoard(
             params MatchRule[] rules
         )
@@ -853,6 +1149,54 @@ namespace TripleTriadApi.Tests.Services
                 BottomValue = bottom,
                 LeftValue = left,
             };
+        }
+
+        /// <summary>A catalogue card whose level is all these hand tests care about — the ranks never matter.</summary>
+        private static Card LevelCard(int id, int level) =>
+            new()
+            {
+                Id = id,
+                Name = $"Card {id}",
+                Image = $"card-{id}.jpg",
+                TopValue = 1,
+                RightValue = 1,
+                BottomValue = 1,
+                LeftValue = 1,
+                Level = level,
+            };
+
+        /// <summary>One catalogue card per level 1..10 — with a single card per level, a card's id is its level.</summary>
+        private static List<Card> OneCardPerLevelCatalogue() =>
+            Enumerable
+                .Range(Card.MinLevel, Card.MaxLevel - Card.MinLevel + 1)
+                .Select(level => LevelCard(level, level))
+                .ToList();
+
+        /// <summary>
+        /// Hands out the scripted rng values in order — each asserted to be inside the range the draw asked for — and
+        /// takes the top of the range once the script runs out, so a test only scripts the draws it asserts on.
+        /// </summary>
+        private sealed class ScriptedRandom(params int[] values) : IRandomSource
+        {
+            private readonly Queue<int> _values = new(values);
+
+            /// <summary>Every exclusive upper bound the draw asked for, in call order.</summary>
+            public List<int> Bounds { get; } = [];
+
+            public int Next(int exclusiveMax)
+            {
+                Bounds.Add(exclusiveMax);
+
+                if (_values.Count == 0)
+                {
+                    return exclusiveMax - 1;
+                }
+
+                var value = _values.Dequeue();
+                Assert.InRange(value, 0, exclusiveMax - 1);
+
+                return value;
+            }
         }
 
         private static CardPlacement CreatePlacement(Card card, string owner, int x, int y)

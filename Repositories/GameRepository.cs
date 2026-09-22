@@ -51,6 +51,14 @@ namespace TripleTriadApi.Repositories
 
         /// <summary>Every active match with its hands and placements — what the timeout sweep works from.</summary>
         Task<List<Match>> GetActiveMatchesAsync();
+
+        /// <summary>
+        /// The active matches in which <paramref name="playerId"/> is the opponent (player 2) and it is their turn —
+        /// what the CPU's move engine works from, since the sentinel only ever plays that seat. The board and both
+        /// hands come with their **cards**, because a move has to be evaluated against the real values (the timeout
+        /// sweep's query loads neither: it only looks at counts and timestamps).
+        /// </summary>
+        Task<List<Match>> GetMatchesAwaitingTurnAsync(string playerId);
     }
 
     public class GameRepository(TripleTriadContext context) : IGameRepository
@@ -279,6 +287,21 @@ namespace TripleTriadApi.Repositories
             return await _context
                 .Matches.Where(m => m.Status == "waiting" && string.IsNullOrEmpty(m.Player2Id))
                 .OrderBy(m => m.CreatedAt)
+                .ToListAsync();
+        }
+
+        public async Task<List<Match>> GetMatchesAwaitingTurnAsync(string playerId)
+        {
+            return await _context
+                .Matches.Include(m => m.CardPlacements)
+                .ThenInclude(placement => placement.Card)
+                .Include(m => m.PlayerHands)
+                .ThenInclude(hand => hand.Card)
+                .Where(m =>
+                    m.Status == "active"
+                    && m.Player2Id == playerId
+                    && m.CurrentPlayerTurn == playerId
+                )
                 .ToListAsync();
         }
     }

@@ -190,19 +190,136 @@ namespace TripleTriadApi.Tests.Controllers
             await SeedAsync(context);
             var controller = CreateController(context, PlayerLogin);
 
-            // Both flags describe the same hand: either the list is the hand, or the hand comes later.
-            var withList = await controller.CreateMatch(
+            // The list and the flag describe the same hand twice, whichever opponent the match is for.
+            var waiting = await controller.CreateMatch(
                 new CreateMatchRequest { CardIds = FirstHand, PickHandLater = true }
             );
-
-            // …and a match against the AI is never waiting for an opponent to pick anything.
-            var withAi = await controller.CreateMatch(
-                new CreateMatchRequest { OpponentId = "AI", PickHandLater = true }
+            var againstTheCpu = await controller.CreateMatch(
+                new CreateMatchRequest
+                {
+                    OpponentId = CpuOpponent.Login,
+                    CardIds = FirstHand,
+                    PickHandLater = true,
+                }
             );
 
-            AssertContradictoryPickHandLater(withList);
-            AssertContradictoryPickHandLater(withAi);
+            AssertContradictoryPickHandLater(waiting);
+            AssertContradictoryPickHandLater(againstTheCpu);
             Assert.Empty(context.Matches);
+        }
+
+        [Fact]
+        public async Task CreateMatch_AgainstTheCpuWithPickHandLater_FilesOnlyTheCpuHand()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context);
+            var controller = CreateController(context, PlayerLogin);
+
+            // The SelectHand flow against the CPU: it is seated as player 2 with a hand of its own, and the human's
+            // five arrive through POST match/{id}/hand like any other pick.
+            var result = await controller.CreateMatch(
+                new CreateMatchRequest { OpponentId = CpuOpponent.Login, PickHandLater = true }
+            );
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+            var root = json.RootElement;
+            var matchId = root.GetProperty("match").GetProperty("Id").GetInt32();
+
+            Assert.Equal("active", root.GetProperty("match").GetProperty("Status").GetString());
+            Assert.Equal(
+                CpuOpponent.Login,
+                root.GetProperty("match").GetProperty("Player2Id").GetString()
+            );
+            Assert.Equal(0, root.GetProperty("playerHand").GetArrayLength());
+
+            Assert.Equal(
+                GameLogicService.HandSize,
+                await context.PlayerHands.CountAsync(hand => hand.PlayerId == CpuOpponent.Login)
+            );
+            Assert.Equal(
+                0,
+                await context.PlayerHands.CountAsync(hand => hand.PlayerId == PlayerLogin)
+            );
+
+            // Nobody is ready until the human picks — and the pick is what makes the match ready.
+            Assert.False((await ReadStateAsync(controller, matchId)).HandsReady);
+
+            await controller.SetHand(matchId, new SetHandRequest { CardIds = FirstHand });
+
+            Assert.True((await ReadStateAsync(controller, matchId)).HandsReady);
+        }
+
+        [Fact]
+        public async Task CreateMatch_AgainstTheCpuWithACardList_FilesThatHand()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context);
+            var controller = CreateController(context, PlayerLogin);
+
+            // The older client's shape: the list files the human's hand straight away, and the CPU still gets its own.
+            var result = await controller.CreateMatch(
+                new CreateMatchRequest { OpponentId = CpuOpponent.Login, CardIds = FirstHand }
+            );
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+            var root = json.RootElement;
+
+            Assert.Equal("active", root.GetProperty("match").GetProperty("Status").GetString());
+            Assert.Equal(FirstHand.Length, root.GetProperty("playerHand").GetArrayLength());
+            Assert.Equal(
+                GameLogicService.HandSize,
+                await context.PlayerHands.CountAsync(hand => hand.PlayerId == CpuOpponent.Login)
+            );
+            Assert.Equal(
+                FirstHand.Length,
+                await context.PlayerHands.CountAsync(hand => hand.PlayerId == PlayerLogin)
+            );
+        }
+
+        [Fact]
+        public async Task CreateMatch_AgainstTheCpu_DrawsItsHandFromTheStrongestLevels()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context);
+            // The rng takes the top of the range on every draw, so the CPU's five are the strongest cards the
+            // catalogue has: level 10 down to level 6, one per level. A uniform draw could not produce that, so
+            // this is what pins the AI path to the level-weighted draw instead of GetRandomHand.
+            var controller = CreateController(context, PlayerLogin, random: new TopOfRangeRandom());
+
+            await controller.CreateMatch(new CreateMatchRequest { OpponentId = CpuOpponent.Login });
+
+            var cpuHand = await context
+                .PlayerHands.Include(hand => hand.Card)
+                .Where(hand => hand.PlayerId == CpuOpponent.Login)
+                .ToListAsync();
+
+            Assert.Equal(
+                new[] { 10, 9, 8, 7, 6 },
+                cpuHand.Select(hand => hand.Card!.Level).OrderByDescending(level => level)
+            );
+        }
+
+        [Fact]
+        public async Task CreateMatch_WithPickHandLaterAndAHumanOpponent_Returns400()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context);
+            var controller = CreateController(context, PlayerLogin);
+
+            // A named human opponent has no picker of their own, so a hand-less match with them would leave a player
+            // stuck: the flag is for a waiting match and for the CPU only.
+            var result = await controller.CreateMatch(
+                new CreateMatchRequest { OpponentId = OpponentLogin, PickHandLater = true }
+            );
+
+            var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(badRequest.Value));
+            Assert.Contains("PickHandLater", json.RootElement.GetProperty("error").GetString());
+
+            Assert.Empty(context.Matches);
+            Assert.Empty(context.PlayerHands);
         }
 
         [Fact]
@@ -596,7 +713,8 @@ namespace TripleTriadApi.Tests.Controllers
         private static GameController CreateController(
             TripleTriadContext context,
             string? login,
-            IMatchNotifier? notifier = null
+            IMatchNotifier? notifier = null,
+            IRandomSource? random = null
         )
         {
             var gameRepository = new GameRepository(context);
@@ -612,7 +730,8 @@ namespace TripleTriadApi.Tests.Controllers
                     new MatchRewardService(new PlayerRepository(context))
                 ),
                 new MatchStateService(gameRepository),
-                notifier ?? new RecordingMatchNotifier()
+                notifier ?? new RecordingMatchNotifier(),
+                random ?? new SystemRandomSource()
             );
 
             var claims = login is null
@@ -708,6 +827,15 @@ namespace TripleTriadApi.Tests.Controllers
         private static int LevelOf(int cardId) => (cardId - 1) % 10 + 1;
 
         /// <summary>
+        /// An rng that always takes the top of the range, i.e. the strongest card the CPU's draw can reach — the
+        /// level-weighted hand it produces is the catalogue's best five (one per level, strongest first).
+        /// </summary>
+        private sealed class TopOfRangeRandom : IRandomSource
+        {
+            public int Next(int exclusiveMax) => exclusiveMax - 1;
+        }
+
+        /// <summary>
         /// Records the pushes a REST call makes so the controller can be tested without a web host (and without a
         /// SignalR connection); the hub's own broadcasts are not this seam's business.
         /// </summary>
@@ -722,9 +850,18 @@ namespace TripleTriadApi.Tests.Controllers
             /// <summary>Matches settled early (a forfeit) with the push reason.</summary>
             public List<(int MatchId, string Reason)> Completed { get; } = [];
 
+            /// <summary>Moves the server played on a client's behalf (the CPU): recorded for the same reason.</summary>
+            public List<MovePush> Moves { get; } = [];
+
             public Task HandReadyAsync(int matchId)
             {
                 HandReadyMatches.Add(matchId);
+                return Task.CompletedTask;
+            }
+
+            public Task CardPlayedAsync(MovePush move)
+            {
+                Moves.Add(move);
                 return Task.CompletedTask;
             }
 

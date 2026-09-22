@@ -29,11 +29,17 @@ namespace TripleTriadApi.Services
         }
 
         /// <summary>
-        /// Awards both players of a completed match. Missing logins (e.g. the "AI"
-        /// opponent) are skipped so the match can still complete cleanly.
+        /// Awards both players of a completed match, or nothing at all against the CPU when
+        /// <see cref="CpuOpponent.RewardsForCpuMatches"/> is off — the whole reward policy for a CPU match is that one
+        /// switch. Missing logins (e.g. the CPU's sentinel) are skipped so the match can still complete cleanly.
         /// </summary>
-        public async Task<MatchRewardResult> AwardForMatchAsync(Match match)
+        public async Task<MatchRewardResult?> AwardForMatchAsync(Match match)
         {
+            if (match.Player2Id == CpuOpponent.Login && !CpuOpponent.RewardsForCpuMatches)
+            {
+                return null;
+            }
+
             var (p1Coins, p1Xp, p1Win, p1Loss, p1Tie) = ResolveOutcome(match, match.Player1Id);
             var (p2Coins, p2Xp, p2Win, p2Loss, p2Tie) = ResolveOutcome(match, match.Player2Id);
 
@@ -78,7 +84,7 @@ namespace TripleTriadApi.Services
             bool tie
         )
         {
-            if (string.IsNullOrEmpty(login) || login == "AI")
+            if (string.IsNullOrEmpty(login) || login == CpuOpponent.Login)
             {
                 return;
             }

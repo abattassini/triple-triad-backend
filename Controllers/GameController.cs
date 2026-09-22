@@ -19,6 +19,7 @@ namespace TripleTriadApi.Controllers
         private readonly GamePlayService _gamePlayService;
         private readonly MatchStateService _matchState;
         private readonly IMatchNotifier _notifier;
+        private readonly IRandomSource _random;
 
         public GameController(
             IGameRepository gameRepository,
@@ -26,7 +27,8 @@ namespace TripleTriadApi.Controllers
             GameLogicService gameLogic,
             GamePlayService gamePlayService,
             MatchStateService matchState,
-            IMatchNotifier notifier
+            IMatchNotifier notifier,
+            IRandomSource random
         )
         {
             _gameRepository = gameRepository;
@@ -35,6 +37,7 @@ namespace TripleTriadApi.Controllers
             _gamePlayService = gamePlayService;
             _matchState = matchState;
             _notifier = notifier;
+            _random = random;
         }
 
         /// <summary>
@@ -128,21 +131,27 @@ namespace TripleTriadApi.Controllers
                     );
                 }
 
-                // Determine opponent: null = waiting for PvP, "AI" = vs AI
+                // Determine opponent: null = waiting for PvP, "AI" = the CPU, which is seated as player 2 straight away
                 string? opponent = request.OpponentId;
 
-                // The hand the client picked, or "I will pick once an opponent is here". Only a match that waits for
-                // an opponent may be created without a hand, because the pick arrives through POST match/{id}/hand.
-                if (
-                    request.PickHandLater
-                    && (!string.IsNullOrEmpty(opponent) || request.CardIds is { Length: > 0 })
-                )
+                // The hand the client picked, or "I will pick once there is an opponent". A waiting PvP match and a
+                // match against the CPU both support the flag — in both cases the only hand missing is the human's,
+                // and the pick arrives through POST match/{id}/hand. Any other named opponent would leave a real
+                // player sitting hand-less, and a list plus the flag describes the same hand twice.
+                if (request.PickHandLater && request.CardIds is { Length: > 0 })
+                {
+                    return BadRequest(
+                        new { error = "PickHandLater cannot be combined with a card list." }
+                    );
+                }
+
+                if (request.PickHandLater && !string.IsNullOrEmpty(opponent) && opponent != CpuOpponent.Login)
                 {
                     return BadRequest(
                         new
                         {
                             error =
-                                "PickHandLater only applies to a match waiting for an opponent, and cannot be combined with a card list.",
+                                "PickHandLater only applies to a match waiting for an opponent, or to a match against the CPU.",
                         }
                     );
                 }
@@ -167,7 +176,8 @@ namespace TripleTriadApi.Controllers
                 var allCards = await _gameRepository.GetAllCardsAsync();
 
                 // Player 1 sits down with the cards they picked, a random draw, or nothing at all when they pick once
-                // an opponent is there. Player 2 only has a hand at creation on the AI path.
+                // an opponent is there. Player 2 only has a hand at creation on the AI path, and there it is the CPU's
+                // level-weighted draw — the uniform draw above is the one a human gets.
                 List<Card> player1Hand;
                 if (hasChosenHand)
                 {
@@ -183,7 +193,7 @@ namespace TripleTriadApi.Controllers
                 }
 
                 List<Card> player2Hand =
-                    match.Status == "active" ? _gameLogic.GetRandomHand(allCards) : [];
+                    match.Status == "active" ? _gameLogic.GetCpuHand(allCards, _random) : [];
 
                 if (player1Hand.Count > 0 || player2Hand.Count > 0)
                 {

@@ -45,6 +45,16 @@ namespace TripleTriadApi.Services
             List<CardPlacement> Board
         );
 
+        /// <summary>
+        /// Plays one card: validates the move, puts the card on the board, resolves every capture the move causes and
+        /// returns the result.
+        /// <para>
+        /// <paramref name="currentPlacements"/> is the move's live board: <see cref="CaptureResolution.TryAdd"/>
+        /// flips the ownership of every card it captures <em>in place</em>, which is what the caller then persists.
+        /// A caller that is only asking what a move <em>would</em> do — the CPU's lookahead — must therefore hand in
+        /// its own copy of the placements, or the captures it only imagined end up on the real board.
+        /// </para>
+        /// </summary>
         public PlayCardResult PlayCard(
             Match match,
             List<CardPlacement> currentPlacements,
@@ -588,6 +598,93 @@ namespace TripleTriadApi.Services
         {
             var random = new Random();
             return availableCards.OrderBy(x => random.Next()).Take(handSize).ToList();
+        }
+
+        /// <summary>
+        /// The five cards the CPU sits down with. The level is drawn first with the CPU's own weights
+        /// (<see cref="CpuOpponent.HandLevelWeight"/> — squared, so its hand averages level 7.9 instead of the 5.6
+        /// of the uniform draw above), then a card is taken from that level. The weights apply per level rather than
+        /// per card, so a level holding only a few cards is neither over- nor under-represented.
+        /// <para>
+        /// Cards are drawn without replacement — a hand never repeats a card — and the weights are re-summed over
+        /// the levels still holding cards, so an exhausted (or empty) level drops out of the draw and a small
+        /// catalogue simply yields the cards it has, up to <paramref name="handSize"/>.
+        /// </para>
+        /// </summary>
+        public List<Card> GetCpuHand(
+            List<Card> availableCards,
+            IRandomSource random,
+            int handSize = HandSize
+        )
+        {
+            var byLevel = LevelPools(availableCards);
+            var hand = new List<Card>(handSize);
+
+            while (hand.Count < handSize && byLevel.Count > 0)
+            {
+                var level = DrawCpuLevel(byLevel, random);
+                var pool = byLevel[level];
+                var card = pool[random.Next(pool.Count)];
+
+                hand.Add(card);
+                pool.Remove(card);
+
+                if (pool.Count == 0)
+                {
+                    byLevel.Remove(level);
+                }
+            }
+
+            return hand;
+        }
+
+        /// <summary>
+        /// The catalogue indexed by level, ignoring the cards outside the level range the collection filter uses
+        /// (<see cref="Card.MinLevel"/>..<see cref="Card.MaxLevel"/>). Catalogue order is kept, so a scripted rng
+        /// draws the card a test expects.
+        /// </summary>
+        private static Dictionary<int, List<Card>> LevelPools(List<Card> availableCards) =>
+            availableCards
+                .Where(card => card.Level >= Card.MinLevel && card.Level <= Card.MaxLevel)
+                .GroupBy(card => card.Level)
+                .ToDictionary(group => group.Key, group => group.ToList());
+
+        /// <summary>
+        /// Picks a level by walking the cumulative weights (<c>level²</c>) the way the card shop picks one. The
+        /// weights are summed over the levels still drawable, so a level the catalogue does not have — or whose
+        /// cards are all used — can never be drawn and the levels that are left keep their ratio: with every level
+        /// populated the total is the 385 of the formula.
+        /// </summary>
+        private static int DrawCpuLevel(Dictionary<int, List<Card>> byLevel, IRandomSource random)
+        {
+            var totalWeight = 0;
+            for (var level = Card.MinLevel; level <= Card.MaxLevel; level++)
+            {
+                if (byLevel.ContainsKey(level))
+                {
+                    totalWeight += CpuOpponent.HandLevelWeight(level);
+                }
+            }
+
+            var pick = random.Next(totalWeight);
+            var cumulative = 0;
+            for (var level = Card.MinLevel; level <= Card.MaxLevel; level++)
+            {
+                if (!byLevel.ContainsKey(level))
+                {
+                    continue;
+                }
+
+                cumulative += CpuOpponent.HandLevelWeight(level);
+                if (pick < cumulative)
+                {
+                    return level;
+                }
+            }
+
+            throw new InvalidOperationException(
+                "The card catalogue has no drawable level for the CPU hand."
+            );
         }
 
         public string GetNextPlayer(string currentPlayer, string player1Id, string player2Id)

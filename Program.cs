@@ -79,6 +79,11 @@ builder.Services.AddScoped<IMatchNotifier, SignalRMatchNotifier>();
 // Settles matches whose deadlines passed: a waiting match nobody joined, a hand that never arrived, a stalled game.
 builder.Services.AddHostedService<MatchTimeoutService>();
 
+// The CPU opponent: its moves are chosen by CpuMoveSelector and played by a sweep through the shared play pipeline,
+// so a match against it is an ordinary match with a server-side mover on player 2.
+builder.Services.AddScoped<CpuMoveSelector>();
+builder.Services.AddHostedService<CpuTurnService>();
+
 // Card shop: the pack draw needs randomness behind a seam (tests script it), so it is a singleton.
 builder.Services.AddSingleton<IRandomSource, SystemRandomSource>();
 builder.Services.AddScoped<PackService>();
