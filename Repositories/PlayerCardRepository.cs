@@ -31,6 +31,12 @@ namespace TripleTriadApi.Repositories
         Task<int> GetOwnedCardCountAsync(string playerId);
 
         /// <summary>
+        /// Which of <paramref name="cardIds"/> the player owns, projected to ids so a hand selection can be checked
+        /// without loading the collection. The result may be shorter than the input — that is the failure signal.
+        /// </summary>
+        Task<List<int>> GetOwnedCardIdsAsync(string playerId, IReadOnlyCollection<int> cardIds);
+
+        /// <summary>
         /// Files the drawn cards: +1 for a card the player already owns, a new row (quantity 1) otherwise.
         /// A card listed twice counts twice and still ends up in a single row.
         /// </summary>
@@ -87,6 +93,22 @@ namespace TripleTriadApi.Repositories
             return await _context.PlayerCards.CountAsync(playerCard =>
                 playerCard.PlayerId == playerId
             );
+        }
+
+        public async Task<List<int>> GetOwnedCardIdsAsync(
+            string playerId,
+            IReadOnlyCollection<int> cardIds
+        )
+        {
+            if (cardIds.Count == 0)
+            {
+                return [];
+            }
+
+            return await _context
+                .PlayerCards.Where(pc => pc.PlayerId == playerId && cardIds.Contains(pc.CardId))
+                .Select(pc => pc.CardId)
+                .ToListAsync();
         }
 
         public async Task AddOrIncrementManyAsync(string playerId, IReadOnlyList<int> cardIds)

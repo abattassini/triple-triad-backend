@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using System.Security.Claims;
 using TripleTriadApi.Models;
 using TripleTriadApi.Repositories;
@@ -13,18 +14,63 @@ namespace TripleTriadApi.Controllers
     public class GameController : ControllerBase
     {
         private readonly IGameRepository _gameRepository;
+        private readonly IPlayerCardRepository _playerCardRepository;
         private readonly GameLogicService _gameLogic;
         private readonly GamePlayService _gamePlayService;
+        private readonly MatchStateService _matchState;
+        private readonly IMatchNotifier _notifier;
 
         public GameController(
             IGameRepository gameRepository,
+            IPlayerCardRepository playerCardRepository,
             GameLogicService gameLogic,
-            GamePlayService gamePlayService
+            GamePlayService gamePlayService,
+            MatchStateService matchState,
+            IMatchNotifier notifier
         )
         {
             _gameRepository = gameRepository;
+            _playerCardRepository = playerCardRepository;
             _gameLogic = gameLogic;
             _gamePlayService = gamePlayService;
+            _matchState = matchState;
+            _notifier = notifier;
+        }
+
+        /// <summary>
+        /// Validates a list of card ids a client wants to play with: exactly <see cref="GameLogicService.HandSize"/>
+        /// of them, no repeats, all in the catalogue and all owned by the caller. Nothing is written here — a caller
+        /// rejects the request (400) before it creates or changes anything.
+        /// </summary>
+        private async Task<(List<Card> Hand, string? Error)> ReadHandAsync(
+            string playerId,
+            IReadOnlyList<int> cardIds
+        )
+        {
+            if (cardIds.Count != GameLogicService.HandSize)
+            {
+                return ([], $"Select exactly {GameLogicService.HandSize} cards.");
+            }
+
+            if (cardIds.Distinct().Count() != cardIds.Count)
+            {
+                return ([], "Your hand cannot contain the same card twice.");
+            }
+
+            var catalogue = await _gameRepository.GetCardsByIdsAsync(cardIds);
+            if (catalogue.Count != cardIds.Count)
+            {
+                return ([], "Unknown card id.");
+            }
+
+            var owned = await _playerCardRepository.GetOwnedCardIdsAsync(playerId, cardIds);
+            if (owned.Count != cardIds.Count)
+            {
+                return ([], "You can only play cards you own.");
+            }
+
+            // The sent order is kept, so the board shows the hand in the order the player picked it.
+            return (cardIds.Select(id => catalogue.First(card => card.Id == id)).ToList(), null);
         }
 
         // The JWT subject is the player's login, which is also the playerId
@@ -55,11 +101,17 @@ namespace TripleTriadApi.Controllers
                     return Unauthorized(new { error = "User not authenticated" });
                 }
 
-                // Check if player already has an active match
+                // Check if player already has an active match. A match whose deadline has passed is ignored: the sweep
+                // settles it within a tick, and a player who has waited long enough to search again must not be told
+                // they are still in a match.
                 var existingMatch = await _gameRepository.GetActiveMatchForPlayerAsync(playerId);
                 if (existingMatch is not null)
                 {
-                    return BadRequest(new { error = "Player already has an active match" });
+                    var existingState = await _matchState.GetStateAsync(existingMatch, DateTime.UtcNow);
+                    if (!existingState.TimedOut)
+                    {
+                        return BadRequest(new { error = "Player already has an active match" });
+                    }
                 }
 
                 // Rules are optional; unknown names are rejected so a typo never silently creates a
@@ -79,26 +131,70 @@ namespace TripleTriadApi.Controllers
                 // Determine opponent: null = waiting for PvP, "AI" = vs AI
                 string? opponent = request.OpponentId;
 
+                // The hand the client picked, or "I will pick once an opponent is here". Only a match that waits for
+                // an opponent may be created without a hand, because the pick arrives through POST match/{id}/hand.
+                if (
+                    request.PickHandLater
+                    && (!string.IsNullOrEmpty(opponent) || request.CardIds is { Length: > 0 })
+                )
+                {
+                    return BadRequest(
+                        new
+                        {
+                            error =
+                                "PickHandLater only applies to a match waiting for an opponent, and cannot be combined with a card list.",
+                        }
+                    );
+                }
+
+                var chosenHand = new List<Card>();
+                var hasChosenHand = false;
+                if (request.CardIds is { Length: > 0 })
+                {
+                    var chosenRead = await ReadHandAsync(playerId, request.CardIds);
+                    if (chosenRead.Error is not null)
+                    {
+                        return BadRequest(new { error = chosenRead.Error });
+                    }
+
+                    chosenHand = chosenRead.Hand;
+                    hasChosenHand = true;
+                }
+
                 // Create new match with the requested rules
                 var match = await _gameRepository.CreateMatchAsync(playerId, opponent, rules);
 
-                // Get all available cards and create random hands
                 var allCards = await _gameRepository.GetAllCardsAsync();
-                var player1Hand = _gameLogic.GetRandomHand(allCards, 5);
 
-                // For PvP waiting matches, only create player1's hand
-                // Player2's hand will be created when they join
+                // Player 1 sits down with the cards they picked, a random draw, or nothing at all when they pick once
+                // an opponent is there. Player 2 only has a hand at creation on the AI path.
+                List<Card> player1Hand;
+                if (hasChosenHand)
+                {
+                    player1Hand = chosenHand;
+                }
+                else if (request.PickHandLater)
+                {
+                    player1Hand = [];
+                }
+                else
+                {
+                    player1Hand = _gameLogic.GetRandomHand(allCards);
+                }
+
                 List<Card> player2Hand =
-                    match.Status == "active" ? _gameLogic.GetRandomHand(allCards, 5) : [];
+                    match.Status == "active" ? _gameLogic.GetRandomHand(allCards) : [];
 
-                // Create player hands in database
-                await _gameRepository.CreatePlayerHandsAsync(
-                    match.Id,
-                    match.Player1Id,
-                    match.Player2Id,
-                    player1Hand,
-                    player2Hand
-                ); // Get the player's hand directly from repository
+                if (player1Hand.Count > 0 || player2Hand.Count > 0)
+                {
+                    await _gameRepository.CreatePlayerHandsAsync(
+                        match.Id,
+                        match.Player1Id,
+                        match.Player2Id,
+                        player1Hand,
+                        player2Hand
+                    );
+                }
                 var playerHand = await _gameRepository.GetPlayerHandAsync(match.Id, playerId);
 
                 return Ok(
@@ -150,6 +246,7 @@ namespace TripleTriadApi.Controllers
             }
 
             var placements = await _gameRepository.GetCardPlacementsAsync(matchId);
+            var state = await _matchState.GetStateAsync(match, DateTime.UtcNow);
 
             return Ok(
                 new
@@ -166,6 +263,9 @@ namespace TripleTriadApi.Controllers
                         match.WinnerId,
                         match.CreatedAt,
                         match.CompletedAt,
+                        // What the SelectHand step waits on: both hands filed, and whether a deadline has passed.
+                        handsReady = state.HandsReady,
+                        timedOut = state.TimedOut,
                         rules = match.Rules.ToNames(),
                     },
                     placements = placements.Select(p => new
@@ -278,6 +378,109 @@ namespace TripleTriadApi.Controllers
             );
         }
 
+        /// <summary>
+        /// Files the five cards a player picked once the match had both players — the SelectHand screen calls this on
+        /// both sides of a Quick Match, so an active match with no hand yet is waiting on exactly this call. The list
+        /// is validated exactly like the one create/join take, so a hand can only ever hold cards the player owns,
+        /// and retrying is safe because the unused rows are replaced.
+        /// </summary>
+        [Authorize]
+        [HttpPost("match/{matchId}/hand")]
+        public async Task<ActionResult<object>> SetHand(int matchId, [FromBody] SetHandRequest request)
+        {
+            try
+            {
+                var playerId = GetCurrentUserId();
+                if (string.IsNullOrEmpty(playerId))
+                {
+                    return Unauthorized(new { error = "User not authenticated" });
+                }
+
+                var match = await _gameRepository.GetMatchByIdAsync(matchId);
+                if (match is null)
+                {
+                    return NotFound(new { error = "Match not found" });
+                }
+
+                if (match.Player1Id != playerId && match.Player2Id != playerId)
+                {
+                    return BadRequest(new { error = "You are not a player in this match." });
+                }
+
+                if (match.Status != "active")
+                {
+                    return BadRequest(new { error = "This match is not waiting for a hand." });
+                }
+
+                if (match.PlayerHands.Any(hand => hand.PlayerId == playerId && hand.IsUsed))
+                {
+                    return BadRequest(new { error = "You have already played a card in this match." });
+                }
+
+                var handRead = await ReadHandAsync(playerId, request.CardIds);
+                if (handRead.Error is not null)
+                {
+                    return BadRequest(new { error = handRead.Error });
+                }
+
+                await _gameRepository.ReplacePlayerHandAsync(matchId, playerId, handRead.Hand);
+
+                // The opponent may be sitting on "waiting for your opponent to pick their cards" (or still picking):
+                // both hands are in now, so whoever is waiting can go to the board.
+                await _notifier.HandReadyAsync(matchId);
+
+                return Ok(new { success = true, matchId, cardIds = handRead.Hand.Select(card => card.Id).ToList() });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Gives up on a waiting match (the Lobby Cancel button): only the creator of a match nobody has joined may
+        /// do it, and the match is abandoned rather than deleted so the history survives.
+        /// </summary>
+        [Authorize]
+        [HttpPost("match/{matchId}/cancel")]
+        public async Task<ActionResult<object>> CancelMatch(int matchId)
+        {
+            try
+            {
+                var playerId = GetCurrentUserId();
+                if (string.IsNullOrEmpty(playerId))
+                {
+                    return Unauthorized(new { error = "User not authenticated" });
+                }
+
+                var match = await _gameRepository.GetMatchByIdAsync(matchId);
+                if (match is null)
+                {
+                    return NotFound(new { error = "Match not found" });
+                }
+
+                if (match.Player1Id != playerId || !string.IsNullOrEmpty(match.Player2Id))
+                {
+                    return BadRequest(new { error = "Only your own waiting match can be cancelled." });
+                }
+
+                if (match.Status != "waiting")
+                {
+                    return BadRequest(new { error = "This match has already started." });
+                }
+
+                match.Status = "abandoned";
+                await _gameRepository.UpdateMatchAsync(match);
+                await _notifier.AbandonedAsync(matchId, "the search was cancelled");
+
+                return Ok(new { success = true, matchId });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
         [Authorize]
         [HttpGet("matches/waiting")]
         public async Task<ActionResult<List<object>>> GetWaitingMatches()
@@ -298,7 +501,10 @@ namespace TripleTriadApi.Controllers
 
         [Authorize]
         [HttpPost("match/{matchId}/join")]
-        public async Task<ActionResult<object>> JoinMatch(int matchId)
+        public async Task<ActionResult<object>> JoinMatch(
+            int matchId,
+            [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] JoinMatchRequest? request = null
+        )
         {
             try
             {
@@ -324,21 +530,55 @@ namespace TripleTriadApi.Controllers
                     return BadRequest(new { error = "Cannot join your own match" });
                 }
 
-                // Update match with second player
+                // The joiner's hand. `PickHandLater` is the SelectHand flow: both players pick once the match has the
+                // two of them, so this request files nothing and POST match/{id}/hand brings the five cards. A list
+                // files them here and now, and neither means the random draw an older client expects. Read (and
+                // validated) before the match is touched, so a bad request leaves it waiting exactly as it was.
+                if (request is { PickHandLater: true, CardIds: { Length: > 0 } })
+                {
+                    return BadRequest(
+                        new { error = "PickHandLater cannot be combined with a card list." }
+                    );
+                }
+
+                var allCards = await _gameRepository.GetAllCardsAsync();
+                List<Card> player2Hand;
+                if (request?.CardIds is { Length: > 0 })
+                {
+                    var joinRead = await ReadHandAsync(playerId, request.CardIds);
+                    if (joinRead.Error is not null)
+                    {
+                        return BadRequest(new { error = joinRead.Error });
+                    }
+
+                    player2Hand = joinRead.Hand;
+                }
+                else if (request?.PickHandLater == true)
+                {
+                    player2Hand = [];
+                }
+                else
+                {
+                    player2Hand = _gameLogic.GetRandomHand(allCards);
+                }
+
+                // Seat the second player and stamp the activation: the hand-pick timeout and the "nobody moved"
+                // timeout are both measured from here.
                 match.Player2Id = playerId;
                 match.Status = "active";
+                match.ActivatedAt = DateTime.UtcNow;
 
-                // Create hand for the joining player
-                var allCards = await _gameRepository.GetAllCardsAsync();
-                var player2Hand = _gameLogic.GetRandomHand(allCards, 5);
+                if (player2Hand.Count > 0)
+                {
+                    await _gameRepository.CreatePlayerHandsAsync(
+                        matchId,
+                        match.Player1Id,
+                        playerId,
+                        [],
+                        player2Hand
+                    );
+                }
 
-                await _gameRepository.CreatePlayerHandsAsync(
-                    matchId,
-                    match.Player1Id,
-                    playerId,
-                    new List<Card>(),
-                    player2Hand
-                );
                 await _gameRepository.UpdateMatchAsync(match);
 
                 // Get the player's hand directly
@@ -389,6 +629,34 @@ namespace TripleTriadApi.Controllers
         /// Optional rules to enable for the match (e.g. <c>["Same"]</c>). Unknown names are rejected.
         /// </summary>
         public string[]? Rules { get; set; }
+
+        /// <summary>The five cards the creator plays with; omitted ⇒ the server draws a random hand.</summary>
+        public int[]? CardIds { get; set; }
+
+        /// <summary>
+        /// True when the creator picks their hand once an opponent is there (the SelectHand flow): the match is
+        /// created waiting with no hand at all, and <c>POST match/{id}/hand</c> files it later.
+        /// </summary>
+        public bool PickHandLater { get; set; }
+    }
+
+    /// <summary>Body of <c>POST api/game/match/{id}/hand</c>: the five cards the waiting player picked.</summary>
+    public class SetHandRequest
+    {
+        public int[] CardIds { get; set; } = [];
+    }
+
+    /// <summary>
+    /// Body of <c>POST api/game/match/{id}/join</c>. A card list files that hand straight away, <c>PickHandLater</c>
+    /// joins with no hand at all (the SelectHand flow, where both players pick and then file through
+    /// <c>POST match/{id}/hand</c>), and an empty body still draws a random hand for an older client.
+    /// </summary>
+    public class JoinMatchRequest
+    {
+        public int[]? CardIds { get; set; }
+
+        /// <summary>True when the joiner picks once the match has both players, in the SelectHand screen.</summary>
+        public bool PickHandLater { get; set; }
     }
 
     public class PlayCardRequest

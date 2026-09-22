@@ -9,6 +9,10 @@ namespace TripleTriadApi.Models
         public string Status { get; set; } = "waiting"; // waiting, active, completed, abandoned
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime? CompletedAt { get; set; }
+
+        // When the second player joined and the match became active. The timeout rules measure "this player never
+        // picked their hand" and "nobody has moved" from here (see Services/MatchTimeouts.cs).
+        public DateTime? ActivatedAt { get; set; }
         public string? WinnerId { get; set; }
         public int Player1Score { get; set; }
         public int Player2Score { get; set; }

@@ -32,6 +32,25 @@ namespace TripleTriadApi.Repositories
         );
         Task UpdateCardPlacementOwnershipAsync(List<CardPlacement> placements);
         Task<List<Match>> GetWaitingMatchesAsync();
+
+        /// <summary>The catalogue rows for the given ids — shorter than the input when an id does not exist.</summary>
+        Task<List<Card>> GetCardsByIdsAsync(IReadOnlyCollection<int> cardIds);
+
+        /// <summary>
+        /// How many cards the player has **filed** in this match's hand, whether they have been played or not: the
+        /// hand is filed once, so this reads 5 from the first pick onwards and never drops when a card leaves the
+        /// hand for the board. It is the "this player brought a hand" test, never "how many cards are left".
+        /// </summary>
+        Task<int> GetFiledHandCountAsync(int matchId, string playerId);
+
+        /// <summary>
+        /// Files a player's hand in one go: their unused rows for the match are cleared first, so a retry after a
+        /// failed request can never leave the hand doubled up. Rows already played are left untouched.
+        /// </summary>
+        Task<List<PlayerHand>> ReplacePlayerHandAsync(int matchId, string playerId, List<Card> cards);
+
+        /// <summary>Every active match with its hands and placements — what the timeout sweep works from.</summary>
+        Task<List<Match>> GetActiveMatchesAsync();
     }
 
     public class GameRepository(TripleTriadContext context) : IGameRepository
@@ -135,6 +154,9 @@ namespace TripleTriadApi.Repositories
             return await _context
                 .PlayerHands.Include(ph => ph.Card)
                 .Where(ph => ph.MatchId == matchId && ph.PlayerId == playerId && !ph.IsUsed)
+                // Ordered by id, i.e. the order the cards were filed (creation, join, or a later pick): that is the
+                // order the player picked them in, and the board renders the hand exactly as it arrives.
+                .OrderBy(ph => ph.Id)
                 .ToListAsync();
         }
 
@@ -193,6 +215,63 @@ namespace TripleTriadApi.Repositories
         {
             _context.CardPlacements.UpdateRange(placements);
             await _context.SaveChangesAsync();
+        }
+
+        public async Task<List<Card>> GetCardsByIdsAsync(IReadOnlyCollection<int> cardIds)
+        {
+            if (cardIds.Count == 0)
+            {
+                return [];
+            }
+
+            return await _context.Cards.Where(card => cardIds.Contains(card.Id)).ToListAsync();
+        }
+
+        public async Task<int> GetFiledHandCountAsync(int matchId, string playerId)
+        {
+            // Played rows count too: `IsUsed` says a card is on the board, not that the hand was never filed.
+            return await _context.PlayerHands.CountAsync(hand =>
+                hand.MatchId == matchId && hand.PlayerId == playerId
+            );
+        }
+
+        public async Task<List<PlayerHand>> ReplacePlayerHandAsync(
+            int matchId,
+            string playerId,
+            List<Card> cards
+        )
+        {
+            var unused = await _context
+                .PlayerHands.Where(hand =>
+                    hand.MatchId == matchId && hand.PlayerId == playerId && !hand.IsUsed
+                )
+                .ToListAsync();
+
+            _context.PlayerHands.RemoveRange(unused);
+
+            var replacement = cards
+                .Select(card => new PlayerHand
+                {
+                    MatchId = matchId,
+                    PlayerId = playerId,
+                    CardId = card.Id,
+                    IsUsed = false,
+                })
+                .ToList();
+
+            _context.PlayerHands.AddRange(replacement);
+            await _context.SaveChangesAsync();
+
+            return replacement;
+        }
+
+        public async Task<List<Match>> GetActiveMatchesAsync()
+        {
+            return await _context
+                .Matches.Include(m => m.CardPlacements)
+                .Include(m => m.PlayerHands)
+                .Where(m => m.Status == "active")
+                .ToListAsync();
         }
 
         public async Task<List<Match>> GetWaitingMatchesAsync()

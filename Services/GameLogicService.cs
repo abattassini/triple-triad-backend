@@ -4,6 +4,12 @@ namespace TripleTriadApi.Services
 {
     public class GameLogicService
     {
+        /// <summary>
+        /// How many cards a hand holds. One definition for the random draw and for any list a client sends, so the
+        /// board's five cards can never disagree with what the server accepts.
+        /// </summary>
+        public const int HandSize = 5;
+
         public class PlayCardResult
         {
             public bool IsValid { get; set; }
@@ -578,7 +584,7 @@ namespace TripleTriadApi.Services
             player2Score = 5 + player2CardsOnBoard - player2CardsPlayed;
         }
 
-        public List<Card> GetRandomHand(List<Card> availableCards, int handSize = 5)
+        public List<Card> GetRandomHand(List<Card> availableCards, int handSize = HandSize)
         {
             var random = new Random();
             return availableCards.OrderBy(x => random.Next()).Take(handSize).ToList();
