@@ -1342,7 +1342,7 @@ namespace TripleTriadApi.Services
                 },
                 new()
                 {
-                    Id = 120,
+                    Id = 114,
                     Name = "Chicobo",
                     Image = "ff8-deck/chicobo.jpg",
                     TopValue = 9,
