@@ -10,16 +10,19 @@ namespace TripleTriadApi.Hubs
         private readonly IGameRepository _gameRepository;
         private readonly GamePlayService _gamePlayService;
         private readonly TokenService _tokenService;
+        private readonly IPlayerRepository _playerRepository;
 
         public GameHub(
             IGameRepository gameRepository,
             GamePlayService gamePlayService,
-            TokenService tokenService
+            TokenService tokenService,
+            IPlayerRepository playerRepository
         )
         {
             _gameRepository = gameRepository;
             _gamePlayService = gamePlayService;
             _tokenService = tokenService;
+            _playerRepository = playerRepository;
         }
 
         public async Task JoinMatch(int matchId)
@@ -55,13 +58,27 @@ namespace TripleTriadApi.Hubs
         {
             // The connection middleware does not populate the hub's user context
             // for WebSocket transports, so we validate the JWT sent with the call.
-            var playerId = _tokenService.ValidateToken(accessToken);
-            if (string.IsNullOrEmpty(playerId))
+            var payload = _tokenService.Validate(accessToken);
+            if (payload is null)
             {
                 Console.WriteLine("⛔ PlayCard rejected: invalid or missing JWT");
                 await Clients.Caller.SendAsync("Error", "User not authenticated");
                 return;
             }
+
+            // A token minted before the player's last password change must not keep working here either. The REST side
+            // gets this from the JWT middleware (see Program.cs); the hub validates its own token because WebSocket
+            // connections do not populate the hub's user context, so it has to repeat the check — otherwise a password
+            // reset would sign the player out everywhere except the game board.
+            var player = await _playerRepository.FindByLoginAsync(payload.Login);
+            if (player is null || player.SessionVersion != payload.SessionVersion)
+            {
+                Console.WriteLine("⛔ PlayCard rejected: session retired by a password change");
+                await Clients.Caller.SendAsync("Error", "User not authenticated");
+                return;
+            }
+
+            var playerId = payload.Login;
 
             Console.WriteLine(
                 $"🎮 PlayCard called: matchId={matchId}, cardId={cardId}, x={x}, y={y}, playerId={playerId}"

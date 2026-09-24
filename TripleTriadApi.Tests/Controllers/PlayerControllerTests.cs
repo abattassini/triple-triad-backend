@@ -8,6 +8,7 @@ using TripleTriadApi.Data;
 using TripleTriadApi.Models;
 using TripleTriadApi.Repositories;
 using TripleTriadApi.Services;
+using TripleTriadApi.Tests.Services;
 using TripleTriadApi.Validators;
 
 namespace TripleTriadApi.Tests.Controllers
@@ -352,7 +353,9 @@ namespace TripleTriadApi.Tests.Controllers
                 new GameRepository(context),
                 new PasswordHasherService(),
                 new RegisterPlayerRequestValidator(),
-                new TokenService()
+                new ResetPasswordRequestValidator(),
+                new TokenService(),
+                PasswordRecoveryTestHarness.CreateService(context, new RecordingEmailSender())
             );
 
             var claims = login is null

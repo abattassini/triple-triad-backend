@@ -1,5 +1,8 @@
+using System.Security.Claims;
 using System.Text;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using TripleTriadApi.Data;
@@ -88,6 +91,79 @@ builder.Services.AddHostedService<CpuTurnService>();
 builder.Services.AddSingleton<IRandomSource, SystemRandomSource>();
 builder.Services.AddScoped<PackService>();
 
+// Password recovery (see plans/password-recovery-plan.md). The token store is also the rate-limit ledger, the service
+// owns the rules, and the mail transport is the only provider-aware piece — which is why it sits behind a seam.
+builder.Services.AddScoped<IPasswordResetRepository, PasswordResetRepository>();
+builder.Services.AddScoped<ResetPasswordRequestValidator>();
+builder.Services.AddScoped<PasswordResetService>();
+
+// Recovery configuration, bound through the options system rather than read from environment variables directly.
+// A service reading the environment while Program.cs reads configuration is precisely the divergence that already
+// caused a 401 bug once (plans/welcome-onboarding-plan.md §326); one source of truth is the fix.
+builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.SectionName));
+builder.Services.Configure<PasswordResetOptions>(
+    builder.Configuration.GetSection(PasswordResetOptions.SectionName)
+);
+builder.Services.Configure<AppOptions>(builder.Configuration.GetSection(AppOptions.SectionName));
+
+// Which transport actually sends recovery mail.
+//
+// The rule is "use the mailbox you were given": SMTP whenever the Email:* settings are configured, and the console
+// sender only as a Development convenience for a machine with no mailbox at all. So a developer with credentials in
+// .env sends real mail, a developer without them still gets a fully usable flow (the code is printed), and production
+// is *always* SMTP — deliberately, because falling back to the console on a misconfigured server would silently stop
+// delivering recoveries and print live reset codes into the hosting logs.
+//
+// SMTP here means "the settings in Email:*", which covers the current dedicated Gmail account and any paid relay
+// (Resend, Brevo, SendGrid and Mailgun all expose SMTP relays). That switch is configuration, not code.
+var emailConfigured =
+    builder.Configuration.GetSection(EmailOptions.SectionName).Get<EmailOptions>()?.IsConfigured ?? false;
+
+if (builder.Environment.IsDevelopment() && !emailConfigured)
+{
+    builder.Services.AddScoped<IEmailSender, ConsoleEmailSender>();
+}
+else
+{
+    builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
+}
+
+// Endpoint rate limiting for password recovery — built into .NET 9, no package needed.
+//
+// Deliberately a *second* mechanism alongside the database-backed caps in PasswordResetService: they protect
+// different things. This one stops a script hammering the code-guessing endpoint and is per-process, so it is cheap;
+// the database one survives a restart, which is what the limits protecting the sending mailbox require.
+var resetAttemptsPerAddressPerHour = builder.Configuration.GetValue(
+    "PasswordReset:ResetAttemptsPerIpPerHour",
+    new PasswordResetOptions().ResetAttemptsPerIpPerHour
+);
+
+builder.Services.AddRateLimiter(limiter =>
+{
+    limiter.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    limiter.AddPolicy(
+        PasswordResetOptions.RateLimitPolicyName,
+        context =>
+        {
+            // Partitioned by client address. Behind a proxy this may be the proxy's address unless ForwardedHeaders
+            // is configured, in which case it behaves more like a global cap; see the plan's notes.
+            var address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+            return RateLimitPartition.GetFixedWindowLimiter(
+                $"password-reset:{address}",
+                _ =>
+                    new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = resetAttemptsPerAddressPerHour,
+                        Window = TimeSpan.FromHours(1),
+                        QueueLimit = 0,
+                    }
+            );
+        }
+    );
+});
+
 // JWT authentication (HS256, same SymmetricSecurityKey as the issued tokens).
 var jwtSecret =
     builder.Configuration["Supabase:JwtSecret"]
@@ -133,10 +209,62 @@ else
 
                     return Task.CompletedTask;
                 },
+
+                // Retire tokens minted before the player's most recent password change.
+                //
+                // A JWT is otherwise trusted for its whole 7-day life, so without this a password reset would leave an
+                // attacker who already held a token signed in — the one thing a reset exists to prevent. The token
+                // carries its generation as "ver" (see TokenService) and the player row holds the current one (see
+                // Player.SessionVersion). Cost: one player read per authenticated request.
+                OnTokenValidated = async context =>
+                {
+                    var login =
+                        context.Principal?.FindFirst("sub")?.Value
+                        ?? context.Principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+                    if (string.IsNullOrEmpty(login))
+                    {
+                        context.Fail("The token has no subject.");
+
+                        return;
+                    }
+
+                    // A token issued before password recovery existed has no session_version and so belongs to
+                    // generation 0, which is what an untouched player row holds. The claim name is deliberately not
+                    // the short "ver", which the JWT handler maps to ClaimTypes.Version on the way in — see
+                    // TokenService.IssueToken.
+                    var versionClaim = context.Principal?.FindFirst("session_version")?.Value;
+                    var tokenVersion = int.TryParse(versionClaim, out var parsed) ? parsed : 0;
+
+                    var players = context.HttpContext.RequestServices.GetRequiredService<IPlayerRepository>();
+                    var player = await players.FindByLoginAsync(login);
+
+                    if (player is null || player.SessionVersion != tokenVersion)
+                    {
+                        context.Fail("This session was signed out by a password change.");
+                    }
+                },
             };
         });
 
     builder.Services.AddAuthorization();
+}
+
+// Password recovery needs a mailbox in production. Say so loudly, but never fail: recovery being unavailable is not a
+// reason for the game to be down. The sender itself refuses at send time with an actionable message — see
+// SmtpEmailSender for why that check deliberately lives there rather than in a constructor.
+if (!emailConfigured && builder.Environment.IsDevelopment())
+{
+    Console.WriteLine("📧 Password recovery email: writing to the log (no mailbox configured).");
+}
+else if (!emailConfigured)
+{
+    Console.WriteLine("⚠️  Email is not configured — password recovery cannot send codes.");
+    Console.WriteLine("   Set Email__Smtp__Host / __Port / __User / __Password and Email__FromAddress.");
+}
+else
+{
+    Console.WriteLine("📧 Password recovery email: SMTP via the configured mailbox.");
 }
 
 // Add SignalR
@@ -191,6 +319,10 @@ else
 {
     app.UseCors("AllowFrontend");
 }
+
+// Runs after routing (which the WebApplication builder wires up automatically), so the endpoint's policy is known by
+// the time a request reaches the limiter.
+app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();

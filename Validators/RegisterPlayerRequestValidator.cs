@@ -7,6 +7,9 @@ namespace TripleTriadApi.Validators
     /// FluentValidation rules for <see cref="RegisterPlayerRequest"/>.
     /// These mirror the client-side rules from the account creation form
     /// (see AccountCreation.tsx) so the backend re-validates everything.
+    ///
+    /// The password policy itself lives in <see cref="PasswordRules"/> so the recovery flow applies the identical
+    /// rules — see that class for why sharing them matters.
     /// </summary>
     public class RegisterPlayerRequestValidator : AbstractValidator<RegisterPlayerRequest>
     {
@@ -20,13 +23,7 @@ namespace TripleTriadApi.Validators
                 .Must(email => IsValidEmail(email.Trim()))
                 .WithMessage("Please enter a valid email address.");
 
-            RuleFor(x => x.Password)
-                .Length(8, 20)
-                .WithMessage("Password must be between 8 and 20 characters.")
-                .Must(ContainsLetter)
-                .WithMessage("Password must contain at least one letter.")
-                .Must(ContainsNumber)
-                .WithMessage("Password must contain at least one number.");
+            RuleFor(x => x.Password).ApplyPasswordPolicy();
         }
 
         private static bool IsValidEmail(string email)
@@ -39,34 +36,6 @@ namespace TripleTriadApi.Validators
 
             // Require a dot after the @ (e.g. user@domain.tld)
             return email.IndexOf('.', atIndex) != -1;
-        }
-
-        private static bool ContainsLetter(string value)
-        {
-            for (var i = 0; i < value.Length; i++)
-            {
-                var ch = value[i];
-                if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z'))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private static bool ContainsNumber(string value)
-        {
-            for (var i = 0; i < value.Length; i++)
-            {
-                var ch = value[i];
-                if (ch >= '0' && ch <= '9')
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
     }
 }

@@ -3,6 +3,7 @@ using FluentValidation.Results;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using TripleTriadApi.Models;
 using TripleTriadApi.Repositories;
 using TripleTriadApi.Services;
@@ -20,7 +21,9 @@ namespace TripleTriadApi.Controllers
         private readonly IGameRepository _gameRepository;
         private readonly PasswordHasherService _passwordHasher;
         private readonly RegisterPlayerRequestValidator _registerValidator;
+        private readonly ResetPasswordRequestValidator _resetPasswordValidator;
         private readonly TokenService _tokenService;
+        private readonly PasswordResetService _passwordResetService;
 
         public PlayerController(
             IPlayerRepository playerRepository,
@@ -29,7 +32,9 @@ namespace TripleTriadApi.Controllers
             IGameRepository gameRepository,
             PasswordHasherService passwordHasher,
             RegisterPlayerRequestValidator registerValidator,
-            TokenService tokenService
+            ResetPasswordRequestValidator resetPasswordValidator,
+            TokenService tokenService,
+            PasswordResetService passwordResetService
         )
         {
             _playerRepository = playerRepository;
@@ -38,7 +43,9 @@ namespace TripleTriadApi.Controllers
             _gameRepository = gameRepository;
             _passwordHasher = passwordHasher;
             _registerValidator = registerValidator;
+            _resetPasswordValidator = resetPasswordValidator;
             _tokenService = tokenService;
+            _passwordResetService = passwordResetService;
         }
 
         [HttpPost("register")]
@@ -125,6 +132,91 @@ namespace TripleTriadApi.Controllers
                 var token = _tokenService.IssueToken(player);
 
                 return Ok(new { token, player = await ToProfileAsync(player) });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Starts a password recovery: if the address belongs to an account, a single-use code is emailed to it.
+        ///
+        /// The answer is <strong>always</strong> the same <c>202</c> with the same body — whether the address exists,
+        /// whether a limit refused it, and whether the mail actually went out. That is deliberate. Any other answer
+        /// would let this endpoint be used to ask "does this person have an account here?", which is the
+        /// reconnaissance half of an account-takeover attempt; it is the same reasoning that makes sign-in answer with
+        /// a generic "Invalid login or password." The real signal lives in the logs: a refusal is logged as a warning
+        /// and a delivery failure as an error.
+        ///
+        /// There is no "was my email sent?" follow-up either, for the same reason.
+        /// </summary>
+        [HttpPost("forgot-password")]
+        [EnableRateLimiting(PasswordResetOptions.RateLimitPolicyName)]
+        public async Task<ActionResult<object>> ForgotPassword([FromBody] ForgotPasswordRequest request)
+        {
+            try
+            {
+                var email = request.Email is null ? string.Empty : request.Email.Trim();
+
+                if (!string.IsNullOrEmpty(email))
+                {
+                    // The outcome is deliberately dropped: every value leads to the same response. It exists so the
+                    // service can log exactly what happened, and so tests can assert on it.
+                    await _passwordResetService.RequestResetAsync(
+                        email,
+                        HttpContext.Connection.RemoteIpAddress?.ToString(),
+                        DateTime.UtcNow
+                    );
+                }
+
+                return Accepted(
+                    new { message = "If that email belongs to an account, a reset code is on its way." }
+                );
+            }
+            catch (Exception ex)
+            {
+                // Safe to be honest here: a database failure is orthogonal to whether the account exists, so a 500
+                // leaks nothing that the generic 202 above is protecting.
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Completes a recovery: the emailed code plus the new password to set.
+        ///
+        /// This endpoint <em>can</em> be specific about failure, unlike <see cref="ForgotPassword"/>, because the code
+        /// is the proof of ownership rather than the address. "That code is not valid" tells an attacker nothing they
+        /// did not already know, and a player who mistyped needs to be told. It cannot be used to probe for accounts:
+        /// a code belongs to an account, an address does not.
+        ///
+        /// A success invalidates every session the player had (see <see cref="Player.SessionVersion"/>), so the client
+        /// must send them to sign in again rather than leaving them signed in.
+        /// </summary>
+        [HttpPost("reset-password")]
+        [EnableRateLimiting(PasswordResetOptions.RateLimitPolicyName)]
+        public async Task<ActionResult<object>> ResetPassword([FromBody] ResetPasswordRequest request)
+        {
+            try
+            {
+                var validationResult = _resetPasswordValidator.Validate(request);
+                if (!validationResult.IsValid)
+                {
+                    return BadRequest(new { error = FirstErrorMessage(validationResult) });
+                }
+
+                var result = await _passwordResetService.ResetPasswordAsync(
+                    request.Token,
+                    request.NewPassword,
+                    DateTime.UtcNow
+                );
+
+                if (!result.Succeeded)
+                {
+                    return BadRequest(new { error = result.Error });
+                }
+
+                return Ok(new { message = "Your password has been changed. You can sign in now." });
             }
             catch (Exception ex)
             {
@@ -321,5 +413,24 @@ namespace TripleTriadApi.Controllers
     {
         public string Identifier { get; set; } = string.Empty;
         public string Password { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Starts a recovery. Only the address is needed — the code is mailed to it, which is also the whole point: the
+    /// address, not this request, is what proves ownership.
+    /// </summary>
+    public class ForgotPasswordRequest
+    {
+        public string Email { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Completes a recovery: the code from the email, and the password to set. The code is the proof of ownership, so
+    /// there is no login or email in this request.
+    /// </summary>
+    public class ResetPasswordRequest
+    {
+        public string Token { get; set; } = string.Empty;
+        public string NewPassword { get; set; } = string.Empty;
     }
 }

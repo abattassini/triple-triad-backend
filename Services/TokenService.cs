@@ -15,6 +15,16 @@ namespace TripleTriadApi.Services
         private static readonly string Alphabet =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
+        /// <summary>
+        /// A token that checked out: who it was issued to, and which generation of that player's credentials it
+        /// belongs to.
+        ///
+        /// <see cref="SessionVersion"/> is compared against <see cref="Player.SessionVersion"/> by whoever is
+        /// authenticating. A mismatch means the player has changed their password since this token was issued, and the
+        /// token must be refused — see <see cref="Player.SessionVersion"/> for why that matters.
+        /// </summary>
+        public sealed record TokenPayload(string Login, int SessionVersion);
+
         private static string LoadSecret()
         {
             var secret = Environment.GetEnvironmentVariable("Supabase__JwtSecret");
@@ -36,7 +46,14 @@ namespace TripleTriadApi.Services
                 "{\"sub\":\"" + JsonEscape(player.Login)
                 + "\",\"login\":\"" + JsonEscape(player.Login)
                 + "\",\"email\":\"" + JsonEscape(player.Email)
-                + "\",\"iat\":" + nowEpochSeconds
+                // The credential generation this token belongs to. Bumped by a password reset, which is how a reset
+                // retires every session the player already had. See Player.SessionVersion.
+                //
+                // The name is deliberately not "ver": that short form IS in the JWT handler's default inbound
+                // claim-type map, so on the way back in it would silently arrive under ClaimTypes.Version instead and
+                // the check in Program.cs would read nothing. An unmapped name cannot be rewritten.
+                + "\",\"session_version\":" + player.SessionVersion
+                + ",\"iat\":" + nowEpochSeconds
                 + ",\"exp\":" + (nowEpochSeconds + (daysToExpire * 86400))
                 + "}";
             var payload = Base64UrlEncode(payloadJson);
@@ -46,11 +63,12 @@ namespace TripleTriadApi.Services
             return signingInput + "." + signature;
         }
 
-        // Validates an HS256 JWT and returns its subject (player login), or null
-        // if the token is malformed, expired, or has an invalid signature.
+        // Validates an HS256 JWT and returns its payload, or null if the token is
+        // malformed, expired, or has an invalid signature.
         // This is used to authenticate SignalR hub calls, where the connection
-        // middleware does not populate the hub's user context for WebSockets.
-        public string? ValidateToken(string token)
+        // middleware does not populate the hub's user context for WebSockets, and it
+        // is the only place the session version is read back out of a token.
+        public TokenPayload? Validate(string token)
         {
             if (string.IsNullOrEmpty(token))
             {
@@ -89,8 +107,26 @@ namespace TripleTriadApi.Services
             }
 
             var subject = ExtractJsonString(payloadJson, "\"sub\":");
-            return string.IsNullOrEmpty(subject) ? null : subject;
+            if (string.IsNullOrEmpty(subject))
+            {
+                return null;
+            }
+
+            // A token issued before password recovery existed carries no session_version. It belongs to generation 0,
+            // which is what every pre-existing player row holds, so those sessions keep working until the player's
+            // first reset — reading a missing claim as 0 is what makes that true.
+            var versionString = ExtractJsonNumber(payloadJson, "\"session_version\":");
+            var sessionVersion = string.IsNullOrEmpty(versionString) ? 0 : Convert.ToInt32(versionString);
+
+            return new TokenPayload(subject, sessionVersion);
         }
+
+        // The login from a valid token, or null.
+        //
+        // Kept as the narrow, version-blind accessor for callers that only need "who is this?" and have no player row
+        // to compare against. Anything authenticating a request should use Validate and check the session version
+        // instead; see Player.SessionVersion.
+        public string? ValidateToken(string token) => Validate(token)?.Login;
 
         private static string Base64UrlDecodeToUtf8(string value)
         {

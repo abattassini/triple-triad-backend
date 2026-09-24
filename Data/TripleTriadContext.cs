@@ -16,6 +16,7 @@ namespace TripleTriadApi.Data
         public DbSet<Player> Players { get; set; }
         public DbSet<PlayerCard> PlayerCards { get; set; }
         public DbSet<PlayerPack> PlayerPacks { get; set; }
+        public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
@@ -52,6 +53,9 @@ namespace TripleTriadApi.Data
                 entity.Property(e => e.Wins).HasDefaultValue(0);
                 entity.Property(e => e.Losses).HasDefaultValue(0);
                 entity.Property(e => e.Ties).HasDefaultValue(0);
+
+                // Credential generation — see the property's comment. Defaulted so existing rows stay valid.
+                entity.Property(e => e.SessionVersion).HasDefaultValue(0);
 
                 // Unique constraints for authentication
                 entity.HasIndex(e => e.Login).IsUnique();
@@ -202,6 +206,27 @@ namespace TripleTriadApi.Data
                 entity.Property(e => e.Quantity).HasDefaultValue(1);
 
                 entity.HasIndex(e => new { e.PlayerId, e.PackCode }).IsUnique();
+            });
+
+            // PasswordResetToken entity configuration (password recovery — see plans/password-recovery-plan.md).
+            modelBuilder.Entity<PasswordResetToken>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+
+                // Lengths mirror the columns they stand in for: the login is capped where Player.Login is, and a
+                // SHA-256 hash in hex is always exactly 64 characters.
+                entity.Property(e => e.PlayerLogin).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.TokenHash).IsRequired().HasMaxLength(64);
+                entity.Property(e => e.RequestedFromIp).HasMaxLength(64);
+
+                // The token lookup is an equality test on the hash, so this index is what keeps a reset cheap — and
+                // uniqueness means two accounts can never be holding the same code.
+                entity.HasIndex(e => e.TokenHash).IsUnique();
+
+                // The table doubles as the rate-limit ledger, which counts rows by account, by source address and by
+                // time; these are the columns those counts filter on.
+                entity.HasIndex(e => e.PlayerLogin);
+                entity.HasIndex(e => e.ExpiresAt);
             });
         }
     }
