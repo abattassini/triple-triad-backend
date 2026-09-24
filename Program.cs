@@ -77,6 +77,7 @@ builder.Services.AddScoped<MatchRewardService>();
 // Match hand readiness/timeout reads (used by the endpoints and the hub) and the pushes the REST side needs
 // (filing a hand, cancelling a match) — the hub itself only broadcasts what happens inside a connection.
 builder.Services.AddScoped<MatchStateService>();
+builder.Services.AddScoped<MatchmakingService>();
 builder.Services.AddScoped<IMatchNotifier, SignalRMatchNotifier>();
 
 // Settles matches whose deadlines passed: a waiting match nobody joined, a hand that never arrived, a stalled game.

@@ -25,6 +25,22 @@ namespace TripleTriadApi.Models
         }
 
         /// <summary>
+        /// True when two rule lists enable exactly the same rules, whatever order they arrive in.
+        ///
+        /// Quick Match uses this to decide whether a waiting match is one the searcher asked for: the player picked
+        /// the rules, so a waiting match played under different rules is somebody else's game and gets left alone.
+        /// Comparing sets rather than sequences matters because the order a client sends is not meaningful — and both
+        /// sides are already deduplicated by <see cref="TryParseAll"/> / <see cref="ParseStorageString"/>.
+        /// </summary>
+        public static bool SameSet(IEnumerable<MatchRule> left, IEnumerable<MatchRule> right)
+        {
+            var leftRules = left.Distinct().ToList();
+            var rightRules = right.Distinct().ToList();
+
+            return leftRules.Count == rightRules.Count && leftRules.All(rightRules.Contains);
+        }
+
+        /// <summary>
         /// Parses a list of rule names (case-insensitive) into the list of enabled rules.
         /// A null list means "no rules"; any blank or unknown name makes the whole list invalid so
         /// typos never silently create a match with the wrong rules.

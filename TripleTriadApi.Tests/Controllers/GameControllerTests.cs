@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using TripleTriadApi.Controllers;
 using TripleTriadApi.Data;
 using TripleTriadApi.Models;
@@ -840,6 +841,10 @@ namespace TripleTriadApi.Tests.Controllers
             var gameRepository = new GameRepository(context);
             var gameLogic = new GameLogicService();
 
+            // One notifier for both, because giving up a player's unfinished matches now happens inside
+            // MatchmakingService: two instances would send those pushes to a recorder the test never looks at.
+            var matchNotifier = notifier ?? new RecordingMatchNotifier();
+
             var controller = new GameController(
                 gameRepository,
                 new PlayerCardRepository(context),
@@ -850,8 +855,14 @@ namespace TripleTriadApi.Tests.Controllers
                     new MatchRewardService(new PlayerRepository(context))
                 ),
                 new MatchStateService(gameRepository),
-                notifier ?? new RecordingMatchNotifier(),
-                random ?? new SystemRandomSource()
+                matchNotifier,
+                random ?? new SystemRandomSource(),
+                new MatchmakingService(
+                    gameRepository,
+                    matchNotifier,
+                    context,
+                    NullLogger<MatchmakingService>.Instance
+                )
             );
 
             var claims = login is null

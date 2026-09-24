@@ -20,6 +20,7 @@ namespace TripleTriadApi.Controllers
         private readonly MatchStateService _matchState;
         private readonly IMatchNotifier _notifier;
         private readonly IRandomSource _random;
+        private readonly MatchmakingService _matchmaking;
 
         public GameController(
             IGameRepository gameRepository,
@@ -28,7 +29,8 @@ namespace TripleTriadApi.Controllers
             GamePlayService gamePlayService,
             MatchStateService matchState,
             IMatchNotifier notifier,
-            IRandomSource random
+            IRandomSource random,
+            MatchmakingService matchmaking
         )
         {
             _gameRepository = gameRepository;
@@ -38,6 +40,7 @@ namespace TripleTriadApi.Controllers
             _matchState = matchState;
             _notifier = notifier;
             _random = random;
+            _matchmaking = matchmaking;
         }
 
         /// <summary>
@@ -83,30 +86,9 @@ namespace TripleTriadApi.Controllers
             return User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
         }
 
-        /// <summary>
-        /// Why a match is abandoned when its player starts another one — the wording the other side reads in the
-        /// `MatchAbandoned` reason (the client renders it as "Match abandoned — …").
-        /// </summary>
-        private const string AbandonedByNewSearchReason = "the other player started another match";
-
-        /// <summary>
-        /// Gives up on every match the player is still in (`waiting` or `active`, in either seat) so that starting a
-        /// Quick Match is never refused because of an earlier one. The rows are abandoned rather than deleted — the
-        /// terminal status is a status write — and whoever was waiting on them is told through the same
-        /// `MatchAbandoned` push the timeout sweep sends, which is what stops the other side from waiting for a match
-        /// that will never be played.
-        /// </summary>
-        private async Task AbandonUnfinishedMatchesAsync(string playerId)
-        {
-            var unfinished = await _gameRepository.GetUnfinishedMatchesForPlayerAsync(playerId);
-
-            foreach (var match in unfinished)
-            {
-                match.Status = "abandoned";
-                await _gameRepository.UpdateMatchAsync(match);
-                await _notifier.AbandonedAsync(match.Id, AbandonedByNewSearchReason);
-            }
-        }
+        // Giving up a player's unfinished matches used to live here. It moved to MatchmakingService because it is part
+        // of the matchmaking decision rather than of any one endpoint: it has to happen inside the same gate as the
+        // find-or-create, or a search could give up a match that another search is about to claim.
 
         [HttpGet("cards")]
         public async Task<ActionResult<List<Card>>> GetCards()
@@ -187,7 +169,7 @@ namespace TripleTriadApi.Controllers
                 // whose opponent did — waiting for the sweep before they could search again. Everything they are in is
                 // abandoned instead, and the opposing side is told. Deliberately after the validation above, so a
                 // rejected request still writes nothing.
-                await AbandonUnfinishedMatchesAsync(playerId);
+                await _matchmaking.AbandonUnfinishedAsync(playerId);
 
                 // Create new match with the requested rules
                 var match = await _gameRepository.CreateMatchAsync(playerId, opponent, rules);
@@ -238,6 +220,88 @@ namespace TripleTriadApi.Controllers
                             match.Status,
                             match.Player1Score,
                             match.Player2Score,
+                            rules = match.Rules.ToNames(),
+                        },
+                        playerHand = playerHand
+                            .Where(ph => !ph.IsUsed)
+                            .Select(ph => new
+                            {
+                                ph.Card.Id,
+                                ph.Card.Name,
+                                ph.Card.Image,
+                                ph.Card.TopValue,
+                                ph.Card.RightValue,
+                                ph.Card.BottomValue,
+                                ph.Card.LeftValue,
+                                ph.Card.Element,
+                                ph.Card.Level,
+                            })
+                            .ToList(),
+                    }
+                );
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Quick Match: the player is asking to be put into a game, not asking for a match record.
+        ///
+        /// This is the entire search in one request — find a compatible opponent who is waiting, join them, or start a
+        /// match to be found in. It replaced the client's old read-then-decide-then-write sequence, in which two
+        /// players searching at the same instant could both conclude "nobody is waiting" and each start their own
+        /// match, leaving the two of them waiting for each other. The decision now happens on the server, under a
+        /// gate, so it cannot be made twice; see <see cref="MatchmakingService"/> for the full account.
+        ///
+        /// No hand is filed here: the SelectHand screen picks once the match has both players, on both sides, through
+        /// <c>POST match/{id}/hand</c>. The response mirrors create and join so the client can read the answer the same
+        /// way either time — <c>waiting</c> means "you are the one being found", <c>active</c> means "somebody was
+        /// already waiting and you are in their game".
+        /// </summary>
+        [Authorize]
+        [HttpPost("match/quick")]
+        public async Task<ActionResult<object>> QuickMatch([FromBody] QuickMatchRequest? request = null)
+        {
+            try
+            {
+                var playerId = GetCurrentUserId();
+                if (string.IsNullOrEmpty(playerId))
+                {
+                    return Unauthorized(new { error = "User not authenticated" });
+                }
+
+                if (!MatchRuleExtensions.TryParseAll(request?.Rules, out var rules))
+                {
+                    return BadRequest(
+                        new
+                        {
+                            error =
+                                "Unknown rule. Supported rules: "
+                                + string.Join(", ", MatchRuleExtensions.SupportedRuleNames()),
+                        }
+                    );
+                }
+
+                var match = await _matchmaking.FindOrCreateWaitingMatchAsync(
+                    playerId,
+                    rules,
+                    DateTime.UtcNow
+                );
+
+                var playerHand = await _gameRepository.GetPlayerHandAsync(match.Id, playerId);
+
+                return Ok(
+                    new
+                    {
+                        match = new
+                        {
+                            match.Id,
+                            match.Player1Id,
+                            match.Player2Id,
+                            match.CurrentPlayerTurn,
+                            match.Status,
                             rules = match.Rules.ToNames(),
                         },
                         playerHand = playerHand
@@ -595,7 +659,7 @@ namespace TripleTriadApi.Controllers
                 // create: a player may only ever be in one match at a time, and joining while an old one is still open
                 // would leave two. Like create, this sits after the validation above, so a rejected join writes
                 // nothing and the match being joined is left exactly as it was.
-                await AbandonUnfinishedMatchesAsync(playerId);
+                await _matchmaking.AbandonUnfinishedAsync(playerId);
 
                 // Seat the second player and stamp the activation: the hand-pick timeout and the "nobody moved"
                 // timeout are both measured from here.
@@ -673,6 +737,18 @@ namespace TripleTriadApi.Controllers
         /// created waiting with no hand at all, and <c>POST match/{id}/hand</c> files it later.
         /// </summary>
         public bool PickHandLater { get; set; }
+    }
+
+    /// <summary>
+    /// Body of <c>POST api/game/match/quick</c>: the rules the searcher wants to play by.
+    ///
+    /// There is deliberately no card list and no "pick later" flag — Quick Match always seats both players and lets
+    /// the SelectHand screen file the hands, so the match is created without a hand on either side.
+    /// </summary>
+    public class QuickMatchRequest
+    {
+        /// <summary>Rules to play by; omitted or null means the basic rules only. Unknown names are rejected.</summary>
+        public string[]? Rules { get; set; }
     }
 
     /// <summary>Body of <c>POST api/game/match/{id}/hand</c>: the five cards the waiting player picked.</summary>

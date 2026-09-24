@@ -40,6 +40,17 @@ namespace TripleTriadApi.Repositories
         Task UpdateCardPlacementOwnershipAsync(List<CardPlacement> placements);
         Task<List<Match>> GetWaitingMatchesAsync();
 
+        /// <summary>
+        /// Seats <paramref name="playerId"/> in a match that is still waiting, but only if it is genuinely still
+        /// waiting when the write lands. Returns false when it is not — someone else took it first.
+        ///
+        /// This is the claim Quick Match makes, and it has to be a single guarded statement rather than a read
+        /// followed by a save: the read says "available", and by the time a separate write runs it may not be. On
+        /// success the tracked row (when there is one) is refreshed, because the guarded statement bypasses the change
+        /// tracker — the same reason <c>TrySpendCoinsAsync</c> reads the balance back.
+        /// </summary>
+        Task<bool> TryClaimWaitingMatchAsync(int matchId, string playerId, DateTime now);
+
         /// <summary>The catalogue rows for the given ids — shorter than the input when an id does not exist.</summary>
         Task<List<Card>> GetCardsByIdsAsync(IReadOnlyCollection<int> cardIds);
 
@@ -293,6 +304,60 @@ namespace TripleTriadApi.Repositories
                 .Matches.Where(m => m.Status == "waiting" && string.IsNullOrEmpty(m.Player2Id))
                 .OrderBy(m => m.CreatedAt)
                 .ToListAsync();
+        }
+
+        public async Task<bool> TryClaimWaitingMatchAsync(int matchId, string playerId, DateTime now)
+        {
+            if (_context.Database.IsInMemory())
+            {
+                // The in-memory provider has no bulk update, so the guarded read-modify-write below is the only option
+                // there — the same accommodation PlayerRepository.TrySpendCoinsAsync makes for coins.
+                var tracked = await _context.Matches.FirstOrDefaultAsync(m => m.Id == matchId);
+                if (
+                    tracked is null
+                    || tracked.Status != "waiting"
+                    || !string.IsNullOrEmpty(tracked.Player2Id)
+                )
+                {
+                    return false;
+                }
+
+                tracked.Player2Id = playerId;
+                tracked.Status = "active";
+                tracked.ActivatedAt = now;
+                await _context.SaveChangesAsync();
+
+                return true;
+            }
+
+            // One guarded statement: the row is only seated while it is genuinely still waiting with no second player,
+            // so two players racing for the same match can never both end up in it.
+            var claimed = await _context
+                .Matches.Where(m => m.Id == matchId && m.Status == "waiting" && m.Player2Id == string.Empty)
+                .ExecuteUpdateAsync(setters =>
+                    setters
+                        .SetProperty(m => m.Player2Id, playerId)
+                        .SetProperty(m => m.Status, "active")
+                        .SetProperty(m => m.ActivatedAt, now)
+                );
+
+            if (claimed == 0)
+            {
+                return false;
+            }
+
+            // The bulk update bypassed the change tracker, so a copy of this row that the caller already loaded still
+            // shows it as waiting. Refreshing it here is what lets the winner read the match it just claimed.
+            var cached = _context
+                .ChangeTracker.Entries<Match>()
+                .FirstOrDefault(entry => entry.Entity.Id == matchId);
+
+            if (cached is not null)
+            {
+                await cached.ReloadAsync();
+            }
+
+            return true;
         }
 
         public async Task<List<Match>> GetMatchesAwaitingTurnAsync(string playerId)
