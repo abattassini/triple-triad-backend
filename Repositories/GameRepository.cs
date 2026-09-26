@@ -65,7 +65,11 @@ namespace TripleTriadApi.Repositories
         /// Files a player's hand in one go: their unused rows for the match are cleared first, so a retry after a
         /// failed request can never leave the hand doubled up. Rows already played are left untouched.
         /// </summary>
-        Task<List<PlayerHand>> ReplacePlayerHandAsync(int matchId, string playerId, List<Card> cards);
+        Task<List<PlayerHand>> ReplacePlayerHandAsync(
+            int matchId,
+            string playerId,
+            List<Card> cards
+        );
 
         /// <summary>Every active match with its hands and placements — what the timeout sweep works from.</summary>
         Task<List<Match>> GetActiveMatchesAsync();
@@ -77,6 +81,32 @@ namespace TripleTriadApi.Repositories
         /// sweep's query loads neither: it only looks at counts and timestamps).
         /// </summary>
         Task<List<Match>> GetMatchesAwaitingTurnAsync(string playerId);
+
+        /// <summary>
+        /// Takes a turn in one guarded statement: <paramref name="actor"/>'s turn only flips to
+        /// <paramref name="next"/> while the match is still <c>active</c> and genuinely still theirs, so of any number
+        /// of writers of one turn exactly one is told true. Returns false for the ones that lost, and a caller that
+        /// reads false must persist nothing.
+        ///
+        /// The point is that a turn has **one writer**, however many backends are pointed at the same database (a
+        /// local one and the deployed one, say): both find the same match on the same player's turn — the due time is
+        /// derived from the match id and the board, so they even agree on *when* — and without this claim both would
+        /// play it. See <c>plans/PLAN-016-one-writer-per-turn/plan.md</c>.
+        /// </summary>
+        Task<bool> TryTakeTurnAsync(int matchId, string actor, string next);
+
+        /// <summary>
+        /// Writes a whole move in **one** save: the placement, the cards it captured, the hand row it spent and the
+        /// match row (scores, turn, status). One save is one transaction on PostgreSQL, so a move lands completely or
+        /// not at all — a board that shows a card whose hand row was never marked (or a turn that flipped without a
+        /// card) is not a state this can leave behind.
+        /// </summary>
+        Task PersistMoveAsync(
+            CardPlacement placement,
+            List<CardPlacement> capturedCards,
+            PlayerHand? usedCard,
+            Match match
+        );
     }
 
     public class GameRepository(TripleTriadContext context) : IGameRepository
@@ -306,7 +336,11 @@ namespace TripleTriadApi.Repositories
                 .ToListAsync();
         }
 
-        public async Task<bool> TryClaimWaitingMatchAsync(int matchId, string playerId, DateTime now)
+        public async Task<bool> TryClaimWaitingMatchAsync(
+            int matchId,
+            string playerId,
+            DateTime now
+        )
         {
             if (_context.Database.IsInMemory())
             {
@@ -333,7 +367,9 @@ namespace TripleTriadApi.Repositories
             // One guarded statement: the row is only seated while it is genuinely still waiting with no second player,
             // so two players racing for the same match can never both end up in it.
             var claimed = await _context
-                .Matches.Where(m => m.Id == matchId && m.Status == "waiting" && m.Player2Id == string.Empty)
+                .Matches.Where(m =>
+                    m.Id == matchId && m.Status == "waiting" && m.Player2Id == string.Empty
+                )
                 .ExecuteUpdateAsync(setters =>
                     setters
                         .SetProperty(m => m.Player2Id, playerId)
@@ -373,6 +409,80 @@ namespace TripleTriadApi.Repositories
                     && m.CurrentPlayerTurn == playerId
                 )
                 .ToListAsync();
+        }
+
+        public async Task<bool> TryTakeTurnAsync(int matchId, string actor, string next)
+        {
+            if (_context.Database.IsInMemory())
+            {
+                // No bulk update on the in-memory provider (the same accommodation TryClaimWaitingMatchAsync makes), so
+                // the guard is read first — and deliberately *not* through the change tracker: a context that loaded
+                // this row earlier holds a copy the store has since moved on from, and that stale copy is exactly what
+                // must not win here.
+                var stored = await _context
+                    .Matches.AsNoTracking()
+                    .FirstOrDefaultAsync(m => m.Id == matchId);
+
+                if (
+                    stored is null
+                    || stored.Status != "active"
+                    || stored.CurrentPlayerTurn != actor
+                )
+                {
+                    return false;
+                }
+
+                var tracked = await _context.Matches.FirstOrDefaultAsync(m => m.Id == matchId);
+                if (tracked is null)
+                {
+                    return false;
+                }
+
+                // Only this column changed, so only this column is written: the rest of the row may be older in this
+                // context than it is in the store, and saving it back would undo whatever it missed.
+                tracked.CurrentPlayerTurn = next;
+                await _context.SaveChangesAsync();
+
+                return true;
+            }
+
+            // One guarded statement, so two writers of the same turn cannot both be told true. The change tracker is
+            // left alone on purpose: the caller writes the turn itself when it saves the move (with the same value)
+            // and every other column it saves is one it set from the move it just resolved.
+            var claimed = await _context
+                .Matches.Where(m =>
+                    m.Id == matchId && m.Status == "active" && m.CurrentPlayerTurn == actor
+                )
+                .ExecuteUpdateAsync(setters => setters.SetProperty(m => m.CurrentPlayerTurn, next));
+
+            return claimed > 0;
+        }
+
+        public async Task PersistMoveAsync(
+            CardPlacement placement,
+            List<CardPlacement> capturedCards,
+            PlayerHand? usedCard,
+            Match match
+        )
+        {
+            _context.CardPlacements.Add(placement);
+
+            if (capturedCards.Count != 0)
+            {
+                _context.CardPlacements.UpdateRange(capturedCards);
+            }
+
+            if (usedCard is not null)
+            {
+                _context.PlayerHands.Update(usedCard);
+            }
+
+            _context.Matches.Update(match);
+
+            // Everything the move changed is saved once, which is one transaction on PostgreSQL and one write on the
+            // in-memory store. Nothing here is a partial update, so a board can never disagree with the hand row and
+            // the turn that describe it — see plans/PLAN-016-one-writer-per-turn/plan.md.
+            await _context.SaveChangesAsync();
         }
     }
 }

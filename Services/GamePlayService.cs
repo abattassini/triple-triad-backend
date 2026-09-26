@@ -94,7 +94,28 @@ namespace TripleTriadApi.Services
                     };
                 }
 
-                // 5. Persist all changes to database (awards rewards when the match completes)
+                // 5. Take the turn: the claim that makes a turn single-writer. Everything above read state nobody else can
+                // change while it is this player's turn (the opponent's own claim is guarded on the turn they would need
+                // to take), so the only writer that can still be holding a snapshot of this turn is another writer *of
+                // this turn* — a second backend on the same database (a local one and the deployed one, say) or a
+                // double-sent move. Exactly one of them wins this flip and nothing is written by the ones that lose, so
+                // a card can never be placed twice for one hand row. See plans/PLAN-016-one-writer-per-turn/plan.md.
+                if (
+                    !await _gameRepository.TryTakeTurnAsync(
+                        matchId,
+                        playerId,
+                        _gameLogic.GetNextPlayer(playerId, match.Player1Id, match.Player2Id)
+                    )
+                )
+                {
+                    return new PlayCardServiceResult
+                    {
+                        IsSuccess = false,
+                        ErrorMessage = "Not your turn",
+                    };
+                }
+
+                // 6. Persist all changes to database (awards rewards when the match completes)
                 var rewards = await PersistGameChanges(
                     matchId,
                     cardId,
@@ -106,7 +127,7 @@ namespace TripleTriadApi.Services
                     playerHand
                 );
 
-                // 6. Return success with updated match
+                // 7. Return success with updated match
                 var updatedMatch = await _gameRepository.GetMatchByIdAsync(matchId);
 
                 return new PlayCardServiceResult
@@ -138,7 +159,10 @@ namespace TripleTriadApi.Services
             List<PlayerHand> playerHand
         )
         {
-            // Add the card placement
+            // The move, in the four pieces it changes: the card it places, the cards it captures, the hand row it spends
+            // and the match row. They are written together, at the end (see PersistMoveAsync), because a board that shows
+            // a card whose hand row was never spent — or a turn that flipped without a card — is not a state a move may
+            // leave behind.
             var newPlacement = new CardPlacement
             {
                 MatchId = matchId,
@@ -149,20 +173,11 @@ namespace TripleTriadApi.Services
                 Y = y,
                 PlacedAt = DateTime.UtcNow,
             };
-            await _gameRepository.AddCardPlacementAsync(newPlacement);
 
-            // Update captured cards ownership
-            if (gameResult.CapturedCards.Count != 0)
-            {
-                await _gameRepository.UpdateCardPlacementOwnershipAsync(gameResult.CapturedCards);
-            }
-
-            // Mark card as used in player's hand
             var usedCard = playerHand.FirstOrDefault(ph => ph.CardId == cardId && !ph.IsUsed);
             if (usedCard is not null)
             {
                 usedCard.IsUsed = true;
-                await _gameRepository.UpdatePlayerHandAsync(usedCard);
             }
 
             // Update match state
@@ -186,7 +201,12 @@ namespace TripleTriadApi.Services
                 rewards = await _matchRewardService.AwardForMatchAsync(match);
             }
 
-            await _gameRepository.UpdateMatchAsync(match);
+            await _gameRepository.PersistMoveAsync(
+                newPlacement,
+                gameResult.CapturedCards,
+                usedCard,
+                match
+            );
 
             return rewards;
         }
