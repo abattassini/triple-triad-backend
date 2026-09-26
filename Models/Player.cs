@@ -17,11 +17,11 @@ namespace TripleTriadApi.Models
         /// leave an attacker's stolen token working *after* the victim had changed their password, which is the one
         /// thing the reset is supposed to prevent. Bumping this number on a reset invalidates every session the
         /// player has, everywhere, without storing a token blacklist.
-        /// See <c>plans/password-recovery-plan.md</c> §7.
+        /// See <c>plans/PLAN-013-password-recovery/plan.md</c> §7.
         /// </summary>
         public int SessionVersion { get; set; }
 
-        // Progression & economy (see plans/player-stats-economy-plan.md)
+        // Progression & economy (see plans/PLAN-002-player-stats-economy/plan.md)
         public int Coins { get; set; }
         public int Experience { get; set; }
         public int Wins { get; set; }

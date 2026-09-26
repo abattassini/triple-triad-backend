@@ -92,7 +92,7 @@ builder.Services.AddHostedService<CpuTurnService>();
 builder.Services.AddSingleton<IRandomSource, SystemRandomSource>();
 builder.Services.AddScoped<PackService>();
 
-// Password recovery (see plans/password-recovery-plan.md). The token store is also the rate-limit ledger, the service
+// Password recovery (see plans/PLAN-013-password-recovery/plan.md). The token store is also the rate-limit ledger, the service
 // owns the rules, and the mail transport is the only provider-aware piece — which is why it sits behind a seam.
 builder.Services.AddScoped<IPasswordResetRepository, PasswordResetRepository>();
 builder.Services.AddScoped<ResetPasswordRequestValidator>();
@@ -100,7 +100,7 @@ builder.Services.AddScoped<PasswordResetService>();
 
 // Recovery configuration, bound through the options system rather than read from environment variables directly.
 // A service reading the environment while Program.cs reads configuration is precisely the divergence that already
-// caused a 401 bug once (plans/welcome-onboarding-plan.md §326); one source of truth is the fix.
+// caused a 401 bug once (plans/PLAN-010-welcome-onboarding/plan.md §326); one source of truth is the fix.
 builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.SectionName));
 builder.Services.Configure<PasswordResetOptions>(
     builder.Configuration.GetSection(PasswordResetOptions.SectionName)

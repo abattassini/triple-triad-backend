@@ -12,7 +12,7 @@ namespace TripleTriadApi.Services
     /// place: the lookahead must leave the match's own placements, and the next candidate's view of them, exactly as
     /// they were (see <see cref="CopyBoard"/>).
     ///
-    /// It is a deliberately one-ply player (plans/cpu-opponent-plan.md §5.2): it takes what it can see, keeps its
+    /// It is a deliberately one-ply player (plans/PLAN-012-cpu-opponent/plan.md §5.2): it takes what it can see, keeps its
     /// strong cards where they are hardest to attack, and this class is the only place to make it smarter.
     /// </summary>
     public class CpuMoveSelector(GameLogicService gameLogic)

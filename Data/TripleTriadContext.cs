@@ -208,7 +208,7 @@ namespace TripleTriadApi.Data
                 entity.HasIndex(e => new { e.PlayerId, e.PackCode }).IsUnique();
             });
 
-            // PasswordResetToken entity configuration (password recovery — see plans/password-recovery-plan.md).
+            // PasswordResetToken entity configuration (password recovery — see plans/PLAN-013-password-recovery/plan.md).
             modelBuilder.Entity<PasswordResetToken>(entity =>
             {
                 entity.HasKey(e => e.Id);

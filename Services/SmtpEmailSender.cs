@@ -37,7 +37,7 @@ namespace TripleTriadApi.Services
                 throw new InvalidOperationException(
                     "Email is not configured, so the message was not sent. Set Email__Smtp__Host, "
                         + "Email__Smtp__Port, Email__Smtp__User, Email__Smtp__Password and Email__FromAddress "
-                        + "(see .env.example and plans/password-recovery-plan.md §5)."
+                        + "(see .env.example and plans/PLAN-013-password-recovery/plan.md §5)."
                 );
             }
 

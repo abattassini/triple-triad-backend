@@ -6,7 +6,7 @@ namespace TripleTriadApi.Services
     /// <see cref="MatchTimeouts"/>: one place to look, one place to change, and every value overridable by
     /// configuration so the limits can be tightened after an incident without a code change.
     ///
-    /// The limits are <strong>layered on purpose</strong> (see <c>plans/password-recovery-plan.md</c> §6). A single
+    /// The limits are <strong>layered on purpose</strong> (see <c>plans/PLAN-013-password-recovery/plan.md</c> §6). A single
     /// global daily cap — the obvious first design — is itself a denial-of-service: one attacker sending that many
     /// requests would lock every player out of recovery for the rest of the day. So the per-account caps are the
     /// primary control (they protect the *player's* inbox, which is the thing we must not spam), the per-IP cap stops

@@ -10,7 +10,7 @@ namespace TripleTriadApi.Services
     /// The login is an **identity, not a display name**: it is what <c>PlayerHand.PlayerId</c>,
     /// <c>CardPlacement.PlayerId</c>/<c>Owner</c>, <c>Match.CurrentPlayerTurn</c> and <c>Match.WinnerId</c> hold, which
     /// is why a match against the CPU needs no schema of its own. The name a human reads is the client's business
-    /// (see plans/cpu-opponent-plan.md §11 for the "looks like a person" work).
+    /// (see plans/PLAN-012-cpu-opponent/plan.md §11 for the "looks like a person" work).
     /// </summary>
     public static class CpuOpponent
     {

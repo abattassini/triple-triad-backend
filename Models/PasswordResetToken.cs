@@ -10,7 +10,7 @@ namespace TripleTriadApi.Models
     ///
     /// These rows double as the rate-limit ledger: the per-account, per-IP and global caps in
     /// <see cref="Services.PasswordResetOptions"/> are all counts over this table's <see cref="CreatedAt"/>, so there
-    /// is no second counter to drift out of step with reality (see <c>plans/password-recovery-plan.md</c> §6).
+    /// is no second counter to drift out of step with reality (see <c>plans/PLAN-013-password-recovery/plan.md</c> §6).
     /// </summary>
     public class PasswordResetToken
     {

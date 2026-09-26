@@ -5,7 +5,7 @@ namespace TripleTriadApi.Services
     ///
     /// The settings are deliberately <em>generic SMTP</em> (host / port / user / password) rather than Gmail-specific.
     /// The current deployment sends through a dedicated Gmail account because we own no domain
-    /// (see <c>plans/password-recovery-plan.md</c> §1), but every paid transactional provider we evaluated —
+    /// (see <c>plans/PLAN-013-password-recovery/plan.md</c> §1), but every paid transactional provider we evaluated —
     /// Resend, Brevo, SendGrid, Mailgun — also exposes an SMTP relay. Moving to one of those is therefore a change to
     /// these values and nothing else: no code, no redeploy of logic, no new sender class.
     /// </summary>

@@ -25,7 +25,7 @@ namespace TripleTriadApi.Services
     /// server is what makes the mail authentic at all: Gmail signs it as <c>gmail.com</c>, so SPF and DKIM genuinely
     /// pass. The alternative — relaying via a provider with a free-mail <c>From:</c> — fails DMARC alignment and is
     /// explicitly called out in Google's sender guidelines ("Don't impersonate Gmail From: headers").
-    /// See <c>plans/password-recovery-plan.md</c> §1 for the full decision record.</para>
+    /// See <c>plans/PLAN-013-password-recovery/plan.md</c> §1 for the full decision record.</para>
     ///
     /// <para><strong>This is a stopgap, not a destination.</strong> The end state is a real domain plus a
     /// transactional relay. The good news is that Resend, Brevo, SendGrid and Mailgun <em>all</em> expose SMTP
