@@ -281,8 +281,10 @@ namespace TripleTriadApi.Tests.Services
                 {
                     var think = CpuOpponent.ThinkTime(matchId, placements);
 
-                    Assert.True(think >= CpuOpponent.MinThink);
-                    Assert.True(think <= CpuOpponent.MaxThink);
+                    // The whole band is the window plus the flat pause agreed on 2026-09-27, and every delay is inside
+                    // it: a move is never answered faster than the pause, and never later than the window allows.
+                    Assert.True(think >= CpuOpponent.ThinkingPause + CpuOpponent.MinThink);
+                    Assert.True(think <= CpuOpponent.ThinkingPause + CpuOpponent.MaxThink);
                     delays.Add(think);
                 }
             }

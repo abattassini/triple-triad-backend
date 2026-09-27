@@ -30,6 +30,15 @@ namespace TripleTriadApi.Services
         public static readonly TimeSpan MaxThink = TimeSpan.FromMilliseconds(3200);
 
         /// <summary>
+        /// A flat pause on top of the window above, so every CPU move reads as somebody thinking rather than as the
+        /// server answering (agreed 2026-09-27: the requester found its moves "happening too fast"). The window above
+        /// still varies move to move; this only shifts the whole band, and it is added inside
+        /// <see cref="ThinkTime"/> so <c>MoveDueAt</c> stays derived from the row — a restart or a redeploy mid-think
+        /// still changes nothing about when the move was due.
+        /// </summary>
+        public static readonly TimeSpan ThinkingPause = TimeSpan.FromSeconds(5);
+
+        /// <summary>
         /// Whether a match against the CPU pays the human like a real one (coins, XP and the W/L/T counter). Flip it
         /// to false and <see cref="MatchRewardService"/> returns nothing at all for a CPU match; the CPU's own half is
         /// skipped either way. One switch, because the economy is the requester's call — kept paying for now.
@@ -59,18 +68,19 @@ namespace TripleTriadApi.Services
         /// <summary>
         /// How long this particular move takes, derived from the match and how many cards are already on the board.
         /// Every move therefore gets its own delay with nothing to store, and a restart (or a redeploy) mid-think
-        /// cannot change when that move was due.
+        /// cannot change when that move was due. <see cref="ThinkingPause"/> is added on top of the window, so the
+        /// delay reads as a person thinking rather than as the server replying.
         /// </summary>
         public static TimeSpan ThinkTime(int matchId, int placements)
         {
             var windowMs = (long)(MaxThink - MinThink).TotalMilliseconds;
             if (windowMs <= 0)
             {
-                return MinThink;
+                return ThinkingPause + MinThink;
             }
 
             var offset = (uint)unchecked(matchId * 31 + placements * 7) % (uint)windowMs;
-            return MinThink + TimeSpan.FromMilliseconds(offset);
+            return ThinkingPause + MinThink + TimeSpan.FromMilliseconds(offset);
         }
 
         /// <summary>
