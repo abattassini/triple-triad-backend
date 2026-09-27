@@ -98,6 +98,109 @@ namespace TripleTriadApi.Services
             );
         }
 
+        /// <summary>How wide the board is — the cells are <c>0..2</c> on both axes.</summary>
+        public const int BoardSize = 3;
+
+        /// <summary>
+        /// One legal move and everything playing it would do: the card, the cell, and the result the real pipeline
+        /// produced for it — captures, triggered rules, the scores it would leave and whether it would end the match.
+        /// </summary>
+        public sealed record MoveOutcome(Card Card, int X, int Y, PlayCardResult Result)
+        {
+            /// <summary>The card's catalogue id — what a move is named by on the wire and in the hand.</summary>
+            public int CardId => Card.Id;
+        }
+
+        /// <summary>
+        /// The board's free cells in reading order — the order candidates are enumerated in and, for the CPU, the order
+        /// its ties are broken in.
+        /// </summary>
+        public static List<(int X, int Y)> EmptyCells(IReadOnlyCollection<CardPlacement> board) =>
+        [
+            .. from y in Enumerable.Range(0, BoardSize)
+               from x in Enumerable.Range(0, BoardSize)
+               where !board.Any(placement => placement.X == x && placement.Y == y)
+               select (x, y),
+        ];
+
+        /// <summary>
+        /// A throwaway copy of the board for one candidate move: everything ownership and position are read from is
+        /// copied, while the <see cref="Card"/> graph is shared — no rule mutates a card.
+        /// <para>
+        /// Every caller that is only asking what a move <em>would</em> do needs this, because
+        /// <see cref="CaptureResolution.TryAdd"/> flips the ownership of the cards it captures <em>in place</em> (see
+        /// <see cref="PlayCard"/>): a candidate must never be resolved on the match's own placements, or the captures
+        /// it only imagined end up on the real board and two candidates score against each other's flips.
+        /// </para>
+        /// </summary>
+        public static List<CardPlacement> CopyBoard(IReadOnlyCollection<CardPlacement> board) =>
+            board
+                .Select(placement => new CardPlacement
+                {
+                    Id = placement.Id,
+                    MatchId = placement.MatchId,
+                    CardId = placement.CardId,
+                    Card = placement.Card,
+                    PlayerId = placement.PlayerId,
+                    Owner = placement.Owner,
+                    X = placement.X,
+                    Y = placement.Y,
+                    PlacedAt = placement.PlacedAt,
+                })
+                .ToList();
+
+        /// <summary>
+        /// Every move <paramref name="actor"/> could make from this board and hand, in reading order, each resolved
+        /// through <see cref="PlayCard"/> on its own copy of the board.
+        /// <para>
+        /// Two callers want the same list for the same reason: the CPU picks one of these moves
+        /// (<see cref="CpuMoveSelector"/>) and a client is handed the whole list so a dropped card can land without
+        /// waiting for the round trip (<see cref="MovePreviewService"/>). Resolving each candidate through the real
+        /// pipeline is what keeps both honest — a SAME or PLUS flip counts here exactly as it would in play, so a change
+        /// to the rules can never leave either caller evaluating a board that no longer behaves the way it assumes.
+        /// </para>
+        /// <para>
+        /// A candidate that is not legal is left out: an occupied cell is never enumerated, and a board that is not the
+        /// actor's to play on comes back as an empty list (the pipeline's own <c>IsValid</c> check decides, not this
+        /// method, so a candidate is never assumed legal).
+        /// </para>
+        /// </summary>
+        public List<MoveOutcome> EnumerateMoves(
+            Match match,
+            IReadOnlyCollection<CardPlacement> board,
+            IReadOnlyCollection<PlayerHand> hand,
+            string actor
+        )
+        {
+            var emptyCells = EmptyCells(board);
+            var playable = hand.Where(row => !row.IsUsed && row.Card is not null).ToList();
+
+            if (emptyCells.Count == 0 || playable.Count == 0)
+            {
+                return [];
+            }
+
+            var moves = new List<MoveOutcome>();
+
+            foreach (var row in playable)
+            {
+                foreach (var (x, y) in emptyCells)
+                {
+                    // Resolved on a copy: see CopyBoard — the pipeline flips what it captures in place.
+                    var result = PlayCard(match, CopyBoard(board), row.Card, actor, x, y);
+
+                    if (!result.IsValid)
+                    {
+                        continue;
+                    }
+
+                    moves.Add(new MoveOutcome(row.Card, x, y, result));
+                }
+            }
+
+            return moves;
+        }
+
         /// <summary>
         /// Validates if the move is legal (position available and correct turn)
         /// </summary>

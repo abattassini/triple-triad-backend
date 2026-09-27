@@ -68,6 +68,10 @@ builder.Services.AddScoped<IPlayerCardRepository, PlayerCardRepository>();
 builder.Services.AddScoped<IPlayerPackRepository, PlayerPackRepository>();
 builder.Services.AddScoped<GameLogicService>();
 builder.Services.AddScoped<GamePlayService>();
+
+// What a player may play this turn, and what each move would do — the board's own answer to "what happens if I drop
+// this card here" (services/MovePreviewService.cs). A read: it never writes a match.
+builder.Services.AddScoped<MovePreviewService>();
 builder.Services.AddScoped<CardSeederService>();
 builder.Services.AddScoped<PasswordHasherService>();
 builder.Services.AddScoped<RegisterPlayerRequestValidator>();

@@ -3,10 +3,11 @@ using TripleTriadApi.Models;
 namespace TripleTriadApi.Services
 {
     /// <summary>
-    /// The two payloads a board listens to, built in one place because two senders use them: the hub, for the moves a
-    /// player makes over SignalR, and <see cref="SignalRMatchNotifier"/>, for the moves the server makes on a client's
-    /// behalf (the CPU) and for the matches it settles on its own (a timeout). They are the anonymous objects the hub
-    /// has always sent, so every field name here is a field name in the client — change one and the board changes.
+    /// The payloads a board is built from, in one place because more than one sender uses them: the hub, for the moves a
+    /// player makes over SignalR and for the answer to <c>RequestLegalMoves</c>, and <see cref="SignalRMatchNotifier"/>,
+    /// for the moves the server makes on a client's behalf (the CPU) and for the matches it settles on its own (a
+    /// timeout). The pushes are the anonymous objects the hub has always sent, so every field name here is a field name
+    /// in the client — change one and the board changes.
     /// </summary>
     public static class MatchPushes
     {
@@ -38,6 +39,42 @@ namespace TripleTriadApi.Services
                 currentPlayer = match.CurrentPlayerTurn,
                 isGameComplete = result.IsGameComplete,
                 winnerId = result.WinnerId,
+            };
+
+        /// <summary>
+        /// `LegalMoves`: the answer to `RequestLegalMoves` — every move the caller may make this turn and what each
+        /// would do. The per-move fields are the ones `CardPlayed` sends, so a client renders a previewed move with the
+        /// same code it renders a push with; the two differences are deliberate:
+        ///
+        /// - `capturedCards` carries **cells**, not placement rows — a preview has no rows, and the board flips by cell.
+        /// - `nextPlayer` is whose turn it will be once the move is played (where `CardPlayed`'s `currentPlayer` is
+        ///   whose turn it already is), because a preview describes a board that has not happened yet.
+        ///
+        /// `placements` is the board the list was computed from, so a client can tell a stale list from a live one.
+        /// </summary>
+        public static object LegalMoves(MovePreviewService.Preview preview) =>
+            new
+            {
+                matchId = preview.Match.Id,
+                playerId = preview.PlayerId,
+                placements = preview.Placements,
+                nextPlayer = preview.NextPlayer,
+                moves = preview.Moves.Select(move => new
+                {
+                    cardId = move.CardId,
+                    x = move.X,
+                    y = move.Y,
+                    capturedCards = move.Result.CapturedCards.Select(placement => new
+                    {
+                        x = placement.X,
+                        y = placement.Y,
+                    }),
+                    triggeredRules = move.Result.TriggeredRules.ToNames(),
+                    player1Score = move.Result.Player1Score,
+                    player2Score = move.Result.Player2Score,
+                    isGameComplete = move.Result.IsGameComplete,
+                    winnerId = move.Result.WinnerId,
+                }),
             };
 
         /// <summary>

@@ -9,18 +9,21 @@ namespace TripleTriadApi.Hubs
     {
         private readonly IGameRepository _gameRepository;
         private readonly GamePlayService _gamePlayService;
+        private readonly MovePreviewService _movePreviewService;
         private readonly TokenService _tokenService;
         private readonly IPlayerRepository _playerRepository;
 
         public GameHub(
             IGameRepository gameRepository,
             GamePlayService gamePlayService,
+            MovePreviewService movePreviewService,
             TokenService tokenService,
             IPlayerRepository playerRepository
         )
         {
             _gameRepository = gameRepository;
             _gamePlayService = gamePlayService;
+            _movePreviewService = movePreviewService;
             _tokenService = tokenService;
             _playerRepository = playerRepository;
         }
@@ -117,6 +120,52 @@ namespace TripleTriadApi.Hubs
                     MatchPushes.Completed(result.UpdatedMatch!, result.Rewards)
                 );
             }
+        }
+
+        /// <summary>
+        /// What the caller may play this turn, and what each move would do — the board's own answer, so it can land a
+        /// card the instant it is dropped instead of waiting for the move to come back over SignalR.
+        ///
+        /// **The caller only.** The list is built from the asking player's hand, which is hidden information: a group
+        /// send would hand the player who just moved the opponent's card ids, and through the catalogue their art and
+        /// ranks. There is nothing to answer when it is not the caller's turn (or not their match) — a client that asked
+        /// early simply keeps the board it has, and every move still goes through <see cref="PlayCard"/>.
+        /// </summary>
+        public async Task RequestLegalMoves(int matchId, string accessToken)
+        {
+            // Same two checks as PlayCard: the connection middleware does not populate the hub's user context for
+            // WebSocket transports, so the JWT travels with the call, and a token minted before a password change
+            // must not keep working here either.
+            var payload = _tokenService.Validate(accessToken);
+            if (payload is null)
+            {
+                Console.WriteLine("⛔ RequestLegalMoves rejected: invalid or missing JWT");
+                await Clients.Caller.SendAsync("Error", "User not authenticated");
+                return;
+            }
+
+            var player = await _playerRepository.FindByLoginAsync(payload.Login);
+            if (player is null || player.SessionVersion != payload.SessionVersion)
+            {
+                Console.WriteLine("⛔ RequestLegalMoves rejected: session retired by a password change");
+                await Clients.Caller.SendAsync("Error", "User not authenticated");
+                return;
+            }
+
+            var preview = await _movePreviewService.PreviewAsync(matchId, payload.Login);
+            if (preview is null)
+            {
+                Console.WriteLine(
+                    $"ℹ️ RequestLegalMoves: nothing to preview for {payload.Login} in match {matchId}"
+                );
+                return;
+            }
+
+            Console.WriteLine(
+                $"🧭 RequestLegalMoves: {preview.Moves.Count} move(s) for {payload.Login} in match {matchId}"
+            );
+
+            await Clients.Caller.SendAsync("LegalMoves", MatchPushes.LegalMoves(preview));
         }
 
         public async Task RequestMatchStatus(int matchId)
