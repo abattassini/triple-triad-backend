@@ -15,9 +15,9 @@ namespace TripleTriadApi.Tests.Controllers
 {
     /// <summary>
     /// Tests for the player endpoints the client reads: `register` (which hands a brand-new account its starting
-    /// inventory of 0 cards and six packs) and the collection the My Cards page reads
-    /// (`GET api/player/cards`) — the JSON shapes those screens depend on, the level ordering the collection groups
-    /// by, that only the caller's cards come back, the empty collection, and the unauthenticated cases.
+    /// inventory of 0 cards and six packs), the collection the My Cards page reads (`GET api/player/cards`), the
+    /// summary behind its level picker, and `GET api/player/profile/{login}` — the public profile another player's
+    /// opponent panel shows, whose shape has to stay closed (no email, no balance, no packs).
     ///
     /// The controller is exercised directly with a hand-built <see cref="HttpContext"/> (same pattern as
     /// <c>ShopControllerTests</c>) over an EF InMemory database, so no web host is needed.
@@ -25,6 +25,9 @@ namespace TripleTriadApi.Tests.Controllers
     public class PlayerControllerTests
     {
         private const string PlayerLogin = "argel";
+
+        /// <summary>The player whose profile is looked up by someone else — the opponent's side of the panel.</summary>
+        private const string RivalLogin = "rival";
 
         [Fact]
         public async Task Cards_ReturnsTheShapeTheMyCardsPageReads()
@@ -256,6 +259,90 @@ namespace TripleTriadApi.Tests.Controllers
             var controller = CreateController(context, login: null);
 
             var result = await controller.CardsSummary();
+
+            Assert.IsType<UnauthorizedObjectResult>(result.Result);
+        }
+
+        [Fact]
+        public async Task Profile_ReturnsThePublicShapeTheOpponentPanelReads()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, PlayerLogin);
+            await SeedPlayerAsync(context, RivalLogin);
+
+            // A record worth reading, an avatar, and two distinct cards (one held twice), so the count has to ignore
+            // copies exactly as the self profile's does. The rival also *has* an email, a coin balance and packs:
+            // none of that may reach another player's screen.
+            var rival = await context.Players.SingleAsync(player => player.Login == RivalLogin);
+            rival.Experience = 250;
+            rival.Wins = 12;
+            rival.Losses = 3;
+            rival.Ties = 1;
+            rival.AvatarUrl = "avatars/rival.png";
+            rival.Coins = 999;
+            AddOwnedCard(context, RivalLogin, cardId: 1, level: 1, quantity: 2);
+            AddOwnedCard(context, RivalLogin, cardId: 5, level: 3, quantity: 1);
+            AddOwnedCard(context, PlayerLogin, cardId: 9, level: 2, quantity: 1);
+            context.PlayerPacks.Add(
+                new PlayerPack
+                {
+                    PlayerId = RivalLogin,
+                    PackCode = PackService.StandardPackCode,
+                    Quantity = 4,
+                    FirstAcquiredAt = DateTime.UtcNow,
+                    LastAcquiredAt = DateTime.UtcNow,
+                }
+            );
+            await context.SaveChangesAsync();
+
+            var controller = CreateController(context, PlayerLogin);
+
+            var result = await controller.Profile(RivalLogin);
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+            var root = json.RootElement;
+
+            // Everything the opponent panel draws: the name, the avatar, the raw XP the level is derived from, the
+            // record, and how many distinct cards the rival owns (2 — the copy held twice must not inflate it).
+            Assert.Equal(RivalLogin, root.GetProperty("login").GetString());
+            Assert.Equal("avatars/rival.png", root.GetProperty("avatarUrl").GetString());
+            Assert.Equal(250, root.GetProperty("experience").GetInt32());
+            Assert.Equal(12, root.GetProperty("wins").GetInt32());
+            Assert.Equal(3, root.GetProperty("losses").GetInt32());
+            Assert.Equal(1, root.GetProperty("ties").GetInt32());
+            Assert.Equal(2, root.GetProperty("cardsOwned").GetInt32());
+
+            // The shape is closed: what this endpoint does not name does not travel — the email, the balance and the
+            // pack count stay with their owner. Written as an exact set rather than absence checks so that a field
+            // added later has to be a deliberate decision about someone else seeing it.
+            Assert.Equal(
+                new[] { "avatarUrl", "cardsOwned", "experience", "login", "losses", "ties", "wins" },
+                root.EnumerateObject().Select(property => property.Name).OrderBy(name => name)
+            );
+        }
+
+        [Theory]
+        [InlineData("nobody-here")] // an unknown login
+        [InlineData(CpuOpponent.Login)] // the CPU sentinel: an identity, never a profile
+        public async Task Profile_WithNoSuchPlayer_Returns404(string login)
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, PlayerLogin);
+            var controller = CreateController(context, PlayerLogin);
+
+            var result = await controller.Profile(login);
+
+            Assert.IsType<NotFoundObjectResult>(result.Result);
+        }
+
+        [Fact]
+        public async Task Profile_WithoutALogin_Returns401()
+        {
+            using var context = CreateContext();
+            var controller = CreateController(context, login: null);
+
+            var result = await controller.Profile(RivalLogin);
 
             Assert.IsType<UnauthorizedObjectResult>(result.Result);
         }

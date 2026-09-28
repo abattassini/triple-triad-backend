@@ -340,6 +340,51 @@ namespace TripleTriadApi.Controllers
             }
         }
 
+        /// <summary>
+        /// Another player's public profile: the handful of figures the opponent panel shows — level (derived from
+        /// <c>experience</c> by the client), avatar, distinct cards owned, and the win/loss/tie record.
+        ///
+        /// Deliberately <em>not</em> <see cref="ToProfileAsync"/>: that is the self shape and carries the email, the
+        /// coin balance and the pack count, none of which belong on a stranger's screen (see
+        /// <see cref="ToPublicProfileAsync"/>).
+        ///
+        /// The CPU plays under the sentinel login and has no <c>Players</c> row at all, so it answers 404 here like
+        /// any unknown login. That is the server-side half of "the CPU's name is never a link" — the client never
+        /// asks (see <c>plans/PLAN-020-opponent-profile/plan.md</c> §3.3).
+        /// </summary>
+        [Authorize]
+        [HttpGet("profile/{login}")]
+        public async Task<ActionResult<object>> Profile(string login)
+        {
+            try
+            {
+                // The same guard `Me` and `Cards` carry: the attribute is what enforces this over HTTP, and the
+                // explicit check is what keeps the action honest when it is called directly (the controller tests).
+                var requester = GetCurrentLogin();
+                if (string.IsNullOrEmpty(requester))
+                {
+                    return Unauthorized(new { error = "User not authenticated" });
+                }
+
+                if (string.IsNullOrWhiteSpace(login))
+                {
+                    return BadRequest(new { error = "A login is required." });
+                }
+
+                var player = await _playerRepository.FindByLoginAsync(login);
+                if (player is null)
+                {
+                    return NotFound(new { error = "Player not found" });
+                }
+
+                return Ok(await ToPublicProfileAsync(player));
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
         /// <summary>One collection entry: the card plus how many copies the player holds.</summary>
         private static object ToCollectionEntry(PlayerCard playerCard) =>
             new
@@ -386,6 +431,23 @@ namespace TripleTriadApi.Controllers
                     player.Login,
                     PackService.StandardPackCode
                 ),
+            };
+
+        /// <summary>
+        /// The public half of a profile: what any signed-in player may see about another one. Kept beside
+        /// <see cref="ToProfileAsync"/> so the two shapes are read together, and narrow on purpose (see
+        /// <see cref="Profile"/>) — coins, packs and the email stay with their owner.
+        /// </summary>
+        private async Task<object> ToPublicProfileAsync(Player player) =>
+            new
+            {
+                login = player.Login,
+                avatarUrl = player.AvatarUrl,
+                experience = player.Experience,
+                wins = player.Wins,
+                losses = player.Losses,
+                ties = player.Ties,
+                cardsOwned = await _playerCardRepository.GetOwnedCardCountAsync(player.Login),
             };
 
         /// <summary>
