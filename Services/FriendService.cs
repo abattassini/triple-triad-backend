@@ -23,16 +23,19 @@ namespace TripleTriadApi.Services
         private readonly IFriendshipRepository _friendships;
         private readonly IPlayerRepository _players;
         private readonly NotificationService _notifications;
+        private readonly IPlayerPresence _presence;
 
         public FriendService(
             IFriendshipRepository friendships,
             IPlayerRepository players,
-            NotificationService notifications
+            NotificationService notifications,
+            IPlayerPresence presence
         )
         {
             _friendships = friendships;
             _players = players;
             _notifications = notifications;
+            _presence = presence;
         }
 
         /// <summary>
@@ -67,6 +70,52 @@ namespace TripleTriadApi.Services
                 ? FriendshipStates.Requested
                 : FriendshipStates.Incoming;
         }
+
+        /// <summary>
+        /// The player's friends — the accepted half of the table, each with a face and a live online flag
+        /// (plans/PLAN-023-social-friends-list/plan.md §3.2). Pending requests are deliberately not here: they are the
+        /// inbox's, where they can be answered.
+        ///
+        /// Two reads whatever the list's length — the pairs, then every friend's player row in one go — and a
+        /// friendship whose player row has gone is skipped rather than drawn blank: nothing keys a friendship on a
+        /// foreign key, so absence is ordinary (PLAN-022 §3.2). Ordered ordinally by login, because that is the order
+        /// the whole layer compares logins in; the page re-sorts for humans inside its two sections.
+        /// </summary>
+        public async Task<IReadOnlyList<FriendSummary>> ListFriendsAsync(string caller)
+        {
+            var friendships = await _friendships.ListAcceptedForAsync(caller);
+            if (friendships.Count == 0)
+            {
+                return [];
+            }
+
+            var logins = friendships
+                .Select(friendship => OtherSideOf(friendship, caller))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            var players = (await _players.FindByLoginsAsync(logins)).ToDictionary(
+                player => player.Login,
+                StringComparer.Ordinal
+            );
+
+            return logins
+                .Where(players.ContainsKey)
+                .OrderBy(login => login, StringComparer.Ordinal)
+                .Select(login => new FriendSummary(
+                    login,
+                    players[login].AvatarUrl,
+                    _presence.IsOnline(login)
+                ))
+                .ToList();
+        }
+
+        /// <summary>
+        /// The other player of the pair. Derived rather than asked of the row: the row holds the two logins in canonical
+        /// order, and it is *who is asking* that decides which of them is the friend.
+        /// </summary>
+        private static string OtherSideOf(Friendship friendship, string caller) =>
+            friendship.PlayerA == caller ? friendship.PlayerB : friendship.PlayerA;
 
         /// <summary>
         /// Asks <paramref name="target"/> to be friends. Idempotent for the caller, and — the one generosity in the
@@ -229,6 +278,13 @@ namespace TripleTriadApi.Services
                 friendship.Id
             );
         }
+
+        /// <summary>
+        /// One friend, ready to draw (plans/PLAN-023-social-friends-list/plan.md §3.2): the other player's login and
+        /// avatar, and whether they are online **right now**. Deliberately thin — the list shows a name, a face and a
+        /// dot, and the profile panel fetches anything more when it is opened.
+        /// </summary>
+        public sealed record FriendSummary(string Login, string? AvatarUrl, bool Online);
 
         /// <summary>Why a friend action was refused — the controller turns this into a status code (§3.4).</summary>
         public enum FriendFailure

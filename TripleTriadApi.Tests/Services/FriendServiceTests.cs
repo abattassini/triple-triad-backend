@@ -398,6 +398,90 @@ namespace TripleTriadApi.Tests.Services
             Assert.Equal(expected, FriendService.StateFor(friendship, Me));
         }
 
+        [Fact]
+        public async Task List_AnswersEachAcceptedPairWithItsOnlineFlag()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, Me);
+            await SeedPlayerAsync(context, "aaron");
+            await SeedPlayerAsync(context, Rival, avatarUrl: "avatars/rival.png");
+            await SeedPlayerAsync(context, "third");
+            var presence = new ConnectionPresence();
+            presence.AddConnection("c1", Rival);
+            var service = FriendshipTestHarness.CreateFriendService(context, presence: presence);
+
+            await service.RequestAsync(Me, Rival);
+            await service.AcceptAsync(Rival, Me);
+            await service.RequestAsync("aaron", Me);
+            await service.AcceptAsync(Me, "aaron");
+            // …and a request nobody answered, which is not a friend.
+            await service.RequestAsync(Me, "third");
+
+            var friends = await service.ListFriendsAsync(Me);
+
+            // Only the two accepted pairs, ordinally ordered, each with its own face and its own online flag.
+            Assert.Equal(new[] { "aaron", Rival }, friends.Select(friend => friend.Login));
+            Assert.False(friends[0].Online);
+            Assert.True(friends[1].Online);
+            Assert.Equal("avatars/rival.png", friends[1].AvatarUrl);
+            Assert.Null(friends[0].AvatarUrl);
+        }
+
+        [Fact]
+        public async Task List_FromTheOtherSide_NamesTheSameFriend()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, Me);
+            await SeedPlayerAsync(context, Rival);
+            var service = FriendshipTestHarness.CreateFriendService(context);
+
+            await service.RequestAsync(Me, Rival);
+            await service.AcceptAsync(Rival, Me);
+
+            // One row, two points of view: each side's list names the other.
+            Assert.Equal(Rival, Assert.Single(await service.ListFriendsAsync(Me)).Login);
+            Assert.Equal(Me, Assert.Single(await service.ListFriendsAsync(Rival)).Login);
+        }
+
+        [Fact]
+        public async Task List_WithNoFriends_IsEmpty()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, Me);
+            await SeedPlayerAsync(context, Rival);
+            var service = FriendshipTestHarness.CreateFriendService(context);
+
+            await service.RequestAsync(Me, Rival);
+
+            // A pending request is the inbox's business, not the list's.
+            Assert.Empty(await service.ListFriendsAsync(Me));
+            Assert.Empty(await service.ListFriendsAsync(Rival));
+        }
+
+        [Fact]
+        public async Task List_SkipsAFriendWhosePlayerRowIsGone()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, Me);
+            // The friendship is there, the player is not — nothing keys the pair on a foreign key, so this is ordinary.
+            context.Friendships.Add(
+                new Friendship
+                {
+                    Id = 42,
+                    PlayerA = Me,
+                    PlayerB = "ghost",
+                    Status = FriendshipStatus.Accepted,
+                    RequestedBy = "ghost",
+                    CreatedAt = DateTime.UtcNow,
+                    RespondedAt = DateTime.UtcNow,
+                }
+            );
+            await context.SaveChangesAsync();
+            var service = FriendshipTestHarness.CreateFriendService(context);
+
+            Assert.Empty(await service.ListFriendsAsync(Me));
+        }
+
         private static TripleTriadContext CreateContext() =>
             new(
                 new DbContextOptionsBuilder<TripleTriadContext>()
@@ -405,7 +489,11 @@ namespace TripleTriadApi.Tests.Services
                     .Options
             );
 
-        private static async Task SeedPlayerAsync(TripleTriadContext context, string login)
+        private static async Task SeedPlayerAsync(
+            TripleTriadContext context,
+            string login,
+            string? avatarUrl = null
+        )
         {
             context.Players.Add(
                 new Player
@@ -413,6 +501,7 @@ namespace TripleTriadApi.Tests.Services
                     Login = login,
                     Email = $"{login}@example.com",
                     PasswordHash = "hash",
+                    AvatarUrl = avatarUrl,
                     CreatedAt = DateTime.UtcNow,
                 }
             );

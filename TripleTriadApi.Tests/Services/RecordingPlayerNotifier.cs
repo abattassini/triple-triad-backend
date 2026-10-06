@@ -13,9 +13,13 @@ namespace TripleTriadApi.Tests.Services
     public class RecordingPlayerNotifier : IPlayerNotifier
     {
         private readonly List<Push> _pushes = [];
+        private readonly List<PresencePush> _presencePushes = [];
 
-        /// <summary>Every push, oldest first.</summary>
+        /// <summary>Every inbox push, oldest first.</summary>
         public IReadOnlyList<Push> Pushes => _pushes;
+
+        /// <summary>Every presence push, oldest first.</summary>
+        public IReadOnlyList<PresencePush> PresencePushes => _presencePushes;
 
         public Task NotificationsChangedAsync(string recipientId, int unreadCount)
         {
@@ -23,10 +27,22 @@ namespace TripleTriadApi.Tests.Services
             return Task.CompletedTask;
         }
 
-        /// <summary>The pushes one player received, in order.</summary>
+        public Task FriendPresenceChangedAsync(string recipientId, string login, bool online)
+        {
+            _presencePushes.Add(new PresencePush(recipientId, login, online));
+            return Task.CompletedTask;
+        }
+
+        /// <summary>The inbox pushes one player received, in order.</summary>
         public List<Push> For(string recipientId) =>
             _pushes.Where(push => push.RecipientId == recipientId).ToList();
 
+        /// <summary>The presence pushes one player received, in order.</summary>
+        public List<PresencePush> PresenceFor(string recipientId) =>
+            _presencePushes.Where(push => push.RecipientId == recipientId).ToList();
+
         public sealed record Push(string RecipientId, int UnreadCount);
+
+        public sealed record PresencePush(string RecipientId, string Login, bool Online);
     }
 }

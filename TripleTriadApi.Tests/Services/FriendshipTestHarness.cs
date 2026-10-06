@@ -16,12 +16,17 @@ namespace TripleTriadApi.Tests.Services
     {
         public static FriendService CreateFriendService(
             TripleTriadContext context,
-            IPlayerNotifier? notifier = null
+            IPlayerNotifier? notifier = null,
+            IPlayerPresence? presence = null
         ) =>
             new(
                 new FriendshipRepository(context),
                 new PlayerRepository(context),
-                CreateNotificationService(context, notifier)
+                CreateNotificationService(context, notifier),
+                // The real registry, not a fake: it is a couple of dictionaries with no dependencies, so a test that
+                // wants somebody online says so by connecting them
+                // (plans/PLAN-023-social-friends-list/plan.md §3.1).
+                presence ?? new ConnectionPresence()
             );
 
         /// <summary>

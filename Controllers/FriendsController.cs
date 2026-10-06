@@ -24,6 +24,44 @@ namespace TripleTriadApi.Controllers
         }
 
         /// <summary>
+        /// The caller's friends — accepted pairs only, each with an avatar and whether they are online **right now**
+        /// (`plans/PLAN-023-social-friends-list/plan.md` §3.2). It is what the Social page splits into its two sections.
+        /// No rate-limit policy here: that one exists to bound the *write* churn of asking and withdrawing, which a read
+        /// cannot cause.
+        /// </summary>
+        [Authorize]
+        [HttpGet]
+        public async Task<ActionResult<object>> GetFriends()
+        {
+            try
+            {
+                var caller = GetCurrentLogin();
+                if (string.IsNullOrEmpty(caller))
+                {
+                    return Unauthorized(new { error = "User not authenticated" });
+                }
+
+                var friends = await _friendService.ListFriendsAsync(caller);
+
+                return Ok(
+                    new
+                    {
+                        friends = friends.Select(friend => new
+                        {
+                            login = friend.Login,
+                            avatarUrl = friend.AvatarUrl,
+                            online = friend.Online,
+                        }),
+                    }
+                );
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        /// <summary>
         /// Asks another player to be friends. Asking again while your own request is outstanding is the same request
         /// rather than an error, and asking someone who has already asked you **accepts theirs** instead of queueing a
         /// second one (<see cref="FriendService.RequestAsync"/>). The answer is `requested`, `friends`, or the refusal.

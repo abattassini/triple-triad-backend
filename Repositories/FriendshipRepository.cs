@@ -36,6 +36,15 @@ namespace TripleTriadApi.Repositories
         /// stamped with their current state in one query instead of one per row.
         /// </summary>
         Task<List<Friendship>> FindByIdsAsync(IReadOnlyCollection<int> ids);
+
+        /// <summary>
+        /// Every **accepted** friendship this player is part of, whichever side they are on
+        /// (plans/PLAN-023-social-friends-list/plan.md §3.2). Pending rows are deliberately absent: a request is
+        /// something to answer, and the inbox is where that happens. Id-ordered, so a caller's list is stable; the
+        /// friend's login per row — and the order a human wants — is the service's business, since "the other one"
+        /// depends on who is asking.
+        /// </summary>
+        Task<List<Friendship>> ListAcceptedForAsync(string login);
     }
 
     public class FriendshipRepository(TripleTriadContext context) : IFriendshipRepository
@@ -104,6 +113,17 @@ namespace TripleTriadApi.Repositories
 
             return await _context
                 .Friendships.Where(friendship => targets.Contains(friendship.Id))
+                .ToListAsync();
+        }
+
+        public async Task<List<Friendship>> ListAcceptedForAsync(string login)
+        {
+            return await _context
+                .Friendships.Where(friendship =>
+                    friendship.Status == FriendshipStatus.Accepted
+                    && (friendship.PlayerA == login || friendship.PlayerB == login)
+                )
+                .OrderBy(friendship => friendship.Id)
                 .ToListAsync();
         }
 

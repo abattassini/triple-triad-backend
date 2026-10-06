@@ -4,18 +4,27 @@ using TripleTriadApi.Hubs;
 namespace TripleTriadApi.Services
 {
     /// <summary>
-    /// The push a notification needs from outside the hub: the row is written in a REST request, while the connection
-    /// that should hear about it is held by the hub. It is an interface because tests have no web host — they record
-    /// the calls instead, exactly like <see cref="IMatchNotifier"/>
+    /// The push a player needs from outside the hub: a row is written (or a socket appears) somewhere the connection
+    /// that should hear about it is not. It is an interface because tests have no web host — they record the calls
+    /// instead, exactly like <see cref="IMatchNotifier"/>
     /// (plans/PLAN-022-notifications-and-friends/plan.md §3.3).
     ///
-    /// The payload is deliberately only the new unread count. The row is the notification; this is the hint that says
-    /// "read again", and the client re-reads rather than rendering from a push.
+    /// Both payloads are deliberately tiny. The row is the notification and the socket is the presence, so these are
+    /// the hints that say "read again" and "redraw that row", and the client re-reads rather than rendering from a push
+    /// (plans/PLAN-023-social-friends-list/plan.md §3.3).
     /// </summary>
     public interface IPlayerNotifier
     {
         /// <summary>Tells the player's connections that their unread count is now <paramref name="unreadCount"/>.</summary>
         Task NotificationsChangedAsync(string recipientId, int unreadCount);
+
+        /// <summary>
+        /// Tells one player's connections that a friend of theirs has come online or gone offline
+        /// (plans/PLAN-023-social-friends-list/plan.md §3.3). The second kind of hint this seam carries, for the same
+        /// audience — one player's own connections, whatever page they are on — which is why it is a method here rather
+        /// than a notifier of its own.
+        /// </summary>
+        Task FriendPresenceChangedAsync(string recipientId, string login, bool online);
     }
 
     public class SignalRPlayerNotifier(IHubContext<GameHub> hub) : IPlayerNotifier
@@ -26,6 +35,11 @@ namespace TripleTriadApi.Services
             _hub
                 .Clients.Group(GroupOf(recipientId))
                 .SendAsync("NotificationsChanged", new { unreadCount });
+
+        public Task FriendPresenceChangedAsync(string recipientId, string login, bool online) =>
+            _hub
+                .Clients.Group(GroupOf(recipientId))
+                .SendAsync("FriendPresenceChanged", new { login, online });
 
         /// <summary>
         /// The group a player's own connections join when they subscribe, named here rather than in the hub so the hub

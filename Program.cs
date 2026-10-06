@@ -111,6 +111,12 @@ builder.Services.AddScoped<IPlayerNotifier, SignalRPlayerNotifier>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<FriendService>();
 
+// Presence (see plans/PLAN-023-social-friends-list/plan.md §3.1): the registry is a **singleton**, because the state it
+// holds is this process's own sockets and would be meaningless per-request; the service that announces changes is
+// scoped, like every other service that reaches the database.
+builder.Services.AddSingleton<IPlayerPresence, ConnectionPresence>();
+builder.Services.AddScoped<PresenceService>();
+
 // Recovery configuration, bound through the options system rather than read from environment variables directly.
 // A service reading the environment while Program.cs reads configuration is precisely the divergence that already
 // caused a 401 bug once (plans/PLAN-010-welcome-onboarding/plan.md §326); one source of truth is the fix.

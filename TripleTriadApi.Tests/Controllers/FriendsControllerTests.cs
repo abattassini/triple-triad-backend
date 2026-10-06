@@ -142,7 +142,55 @@ namespace TripleTriadApi.Tests.Controllers
             Assert.IsType<NotFoundObjectResult>(result.Result);
         }
 
+        [Fact]
+        public async Task GetFriends_AnswersTheCallersFriendsWithTheirPresence()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, Rival, avatarUrl: "avatars/rival.png");
+            context.Friendships.Add(
+                new Friendship
+                {
+                    Id = 7,
+                    PlayerA = Me,
+                    PlayerB = Rival,
+                    Status = FriendshipStatus.Accepted,
+                    RequestedBy = Me,
+                    CreatedAt = DateTime.UtcNow,
+                    RespondedAt = DateTime.UtcNow,
+                }
+            );
+            await context.SaveChangesAsync();
+
+            var presence = new ConnectionPresence();
+            presence.AddConnection("c1", Rival);
+
+            var result = await CreateController(context, Me, presence).GetFriends();
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+            var friend = Assert.Single(json.RootElement.GetProperty("friends").EnumerateArray());
+
+            Assert.Equal(Rival, friend.GetProperty("login").GetString());
+            Assert.Equal("avatars/rival.png", friend.GetProperty("avatarUrl").GetString());
+            Assert.True(friend.GetProperty("online").GetBoolean());
+        }
+
+        [Fact]
+        public async Task GetFriends_WithNoFriends_IsAnEmptyList()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, Me);
+
+            var result = await CreateController(context, Me).GetFriends();
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+
+            Assert.Empty(json.RootElement.GetProperty("friends").EnumerateArray());
+        }
+
         [Theory]
+        [InlineData("list")]
         [InlineData("request")]
         [InlineData("accept")]
         [InlineData("remove")]
@@ -155,6 +203,7 @@ namespace TripleTriadApi.Tests.Controllers
 
             var result = action switch
             {
+                "list" => await controller.GetFriends(),
                 "request" => await controller.RequestFriend(Rival),
                 "accept" => await controller.AcceptFriend(Rival),
                 _ => await controller.RemoveFriend(Rival),
@@ -164,9 +213,15 @@ namespace TripleTriadApi.Tests.Controllers
         }
 
         /// <summary>The controller under test, with the authenticated login (or none) in its HttpContext.</summary>
-        private static FriendsController CreateController(TripleTriadContext context, string? login)
+        private static FriendsController CreateController(
+            TripleTriadContext context,
+            string? login,
+            IPlayerPresence? presence = null
+        )
         {
-            var controller = new FriendsController(FriendshipTestHarness.CreateFriendService(context));
+            var controller = new FriendsController(
+                FriendshipTestHarness.CreateFriendService(context, presence: presence)
+            );
 
             var claims = login is null
                 ? new List<Claim>()
@@ -190,7 +245,11 @@ namespace TripleTriadApi.Tests.Controllers
                     .Options
             );
 
-        private static async Task SeedPlayerAsync(TripleTriadContext context, string login)
+        private static async Task SeedPlayerAsync(
+            TripleTriadContext context,
+            string login,
+            string? avatarUrl = null
+        )
         {
             context.Players.Add(
                 new Player
@@ -198,6 +257,7 @@ namespace TripleTriadApi.Tests.Controllers
                     Login = login,
                     Email = $"{login}@example.com",
                     PasswordHash = "hash",
+                    AvatarUrl = avatarUrl,
                     CreatedAt = DateTime.UtcNow,
                 }
             );

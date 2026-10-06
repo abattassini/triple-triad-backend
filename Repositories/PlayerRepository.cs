@@ -19,6 +19,14 @@ namespace TripleTriadApi.Repositories
         /// afford it — in which case nothing is written.
         /// </summary>
         Task<int?> TrySpendCoinsAsync(string login, int amount);
+
+        /// <summary>
+        /// These players by login, in one read — the friend list needs an avatar per friend, and asking one at a time
+        /// would turn a twenty-friend list into twenty-one queries
+        /// (plans/PLAN-023-social-friends-list/plan.md §3.2). Logins that have no player are simply absent from the
+        /// answer, which is normal here: nothing keys a friendship on a foreign key.
+        /// </summary>
+        Task<List<Player>> FindByLoginsAsync(IReadOnlyCollection<string> logins);
     }
 
     public class PlayerRepository(TripleTriadContext context) : IPlayerRepository
@@ -98,6 +106,20 @@ namespace TripleTriadApi.Repositories
                 .Players.Where(p => p.Login == login)
                 .Select(p => p.Coins)
                 .FirstOrDefaultAsync();
+        }
+
+        public async Task<List<Player>> FindByLoginsAsync(IReadOnlyCollection<string> logins)
+        {
+            if (logins.Count == 0)
+            {
+                return [];
+            }
+
+            var targets = logins.ToList();
+
+            return await _context
+                .Players.Where(player => targets.Contains(player.Login))
+                .ToListAsync();
         }
     }
 }

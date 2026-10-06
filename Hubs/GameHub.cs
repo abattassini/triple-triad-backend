@@ -12,13 +12,15 @@ namespace TripleTriadApi.Hubs
         private readonly MovePreviewService _movePreviewService;
         private readonly TokenService _tokenService;
         private readonly IPlayerRepository _playerRepository;
+        private readonly PresenceService _presenceService;
 
         public GameHub(
             IGameRepository gameRepository,
             GamePlayService gamePlayService,
             MovePreviewService movePreviewService,
             TokenService tokenService,
-            IPlayerRepository playerRepository
+            IPlayerRepository playerRepository,
+            PresenceService presenceService
         )
         {
             _gameRepository = gameRepository;
@@ -26,6 +28,7 @@ namespace TripleTriadApi.Hubs
             _movePreviewService = movePreviewService;
             _tokenService = tokenService;
             _playerRepository = playerRepository;
+            _presenceService = presenceService;
         }
 
         public async Task JoinMatch(int matchId)
@@ -253,12 +256,21 @@ namespace TripleTriadApi.Hubs
                 SignalRPlayerNotifier.GroupOf(payload.Login)
             );
 
+            // Subscribing is also what makes a player **visible**: the join says which login this connection is, and
+            // presence counts it from here (plans/PLAN-023-social-friends-list/plan.md §3.1). It sits after the two
+            // checks above on purpose, so nothing unauthenticated or retired can appear in anyone's friend list.
+            await _presenceService.ConnectAsync(Context.ConnectionId, payload.Login);
+
             Console.WriteLine($"🔔 SubscribeToNotifications: {payload.Login} subscribed");
         }
 
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
-            // Handle player disconnection logic here if needed
+            // The one place a socket's disappearance is noticed: the connection's login is forgotten, and if that was
+            // the player's last connection their friends are told
+            // (plans/PLAN-023-social-friends-list/plan.md §3.3). An id nobody recorded is a no-op.
+            await _presenceService.DisconnectAsync(Context.ConnectionId);
+
             await base.OnDisconnectedAsync(exception);
         }
     }
