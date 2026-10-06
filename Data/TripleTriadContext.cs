@@ -17,6 +17,8 @@ namespace TripleTriadApi.Data
         public DbSet<PlayerCard> PlayerCards { get; set; }
         public DbSet<PlayerPack> PlayerPacks { get; set; }
         public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
+        public DbSet<Friendship> Friendships { get; set; }
+        public DbSet<Notification> Notifications { get; set; }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
@@ -227,6 +229,42 @@ namespace TripleTriadApi.Data
                 // time; these are the columns those counts filter on.
                 entity.HasIndex(e => e.PlayerLogin);
                 entity.HasIndex(e => e.ExpiresAt);
+            });
+
+            // Friendship entity configuration (social — see plans/PLAN-022-notifications-and-friends/plan.md §3.1).
+            modelBuilder.Entity<Friendship>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+
+                // Both sides hold a login, capped where Player.Login is capped, and held in a canonical order
+                // (PlayerA < PlayerB) so that the unordered pair can only ever own one row.
+                entity.Property(e => e.PlayerA).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.PlayerB).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.Status).IsRequired().HasMaxLength(16);
+                entity.Property(e => e.RequestedBy).IsRequired().HasMaxLength(100);
+
+                // The schema's own guarantee that a pair cannot hold two rows — and therefore the reason the service
+                // may look the pair up in either order. It is also the index behind "are these two friends?".
+                entity.HasIndex(e => new { e.PlayerA, e.PlayerB }).IsUnique();
+            });
+
+            // Notification entity configuration (the inbox a friendship is announced in).
+            modelBuilder.Entity<Notification>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+
+                entity.Property(e => e.RecipientId).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.Type).IsRequired().HasMaxLength(50);
+                entity.Property(e => e.ActorId).IsRequired().HasMaxLength(100);
+
+                // Kind-specific extras, reserved for a kind that needs them (nothing writes one yet).
+                entity.Property(e => e.Payload).HasColumnType("jsonb");
+
+                // The badge counts one recipient's rows and filters on the unread ones.
+                entity.HasIndex(e => new { e.RecipientId, e.ReadAt });
+
+                // The list pages one recipient's rows, newest first.
+                entity.HasIndex(e => new { e.RecipientId, e.CreatedAt });
             });
         }
     }

@@ -24,6 +24,7 @@ namespace TripleTriadApi.Controllers
         private readonly ResetPasswordRequestValidator _resetPasswordValidator;
         private readonly TokenService _tokenService;
         private readonly PasswordResetService _passwordResetService;
+        private readonly FriendService _friendService;
 
         public PlayerController(
             IPlayerRepository playerRepository,
@@ -34,7 +35,8 @@ namespace TripleTriadApi.Controllers
             RegisterPlayerRequestValidator registerValidator,
             ResetPasswordRequestValidator resetPasswordValidator,
             TokenService tokenService,
-            PasswordResetService passwordResetService
+            PasswordResetService passwordResetService,
+            FriendService friendService
         )
         {
             _playerRepository = playerRepository;
@@ -46,6 +48,7 @@ namespace TripleTriadApi.Controllers
             _resetPasswordValidator = resetPasswordValidator;
             _tokenService = tokenService;
             _passwordResetService = passwordResetService;
+            _friendService = friendService;
         }
 
         [HttpPost("register")]
@@ -377,7 +380,7 @@ namespace TripleTriadApi.Controllers
                     return NotFound(new { error = "Player not found" });
                 }
 
-                return Ok(await ToPublicProfileAsync(player));
+                return Ok(await ToPublicProfileAsync(player, requester));
             }
             catch (Exception ex)
             {
@@ -437,8 +440,12 @@ namespace TripleTriadApi.Controllers
         /// The public half of a profile: what any signed-in player may see about another one. Kept beside
         /// <see cref="ToProfileAsync"/> so the two shapes are read together, and narrow on purpose (see
         /// <see cref="Profile"/>) — coins, packs and the email stay with their owner.
+        ///
+        /// <paramref name="requester"/> is needed for exactly one field: `friendship` is the pair's state **from the
+        /// caller's point of view**, so the same profile answers `requested` to one player and `incoming` to the
+        /// other (plans/PLAN-022-notifications-and-friends/plan.md §3.7).
         /// </summary>
-        private async Task<object> ToPublicProfileAsync(Player player) =>
+        private async Task<object> ToPublicProfileAsync(Player player, string requester) =>
             new
             {
                 login = player.Login,
@@ -448,6 +455,7 @@ namespace TripleTriadApi.Controllers
                 losses = player.Losses,
                 ties = player.Ties,
                 cardsOwned = await _playerCardRepository.GetOwnedCardCountAsync(player.Login),
+                friendship = await _friendService.StateAsync(requester, player.Login),
             };
 
         /// <summary>

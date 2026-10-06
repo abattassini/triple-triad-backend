@@ -217,6 +217,45 @@ namespace TripleTriadApi.Hubs
             }
         }
 
+        /// <summary>
+        /// Puts this connection in the caller's own player group, so an inbox can be pushed to a **person** rather than
+        /// to a match. The token is validated here for the same reason every other hub method validates its own: a
+        /// WebSocket transport does not populate the hub's user context, so the connection has no identity until a call
+        /// carries one (plans/PLAN-022-notifications-and-friends/plan.md §3.3).
+        ///
+        /// A reconnect is a new connection with a new id, and the server's groups do not follow it — so the client
+        /// calls this again when the socket comes back, exactly as the board re-joins its match.
+        /// </summary>
+        public async Task SubscribeToNotifications(string accessToken)
+        {
+            var payload = _tokenService.Validate(accessToken);
+            if (payload is null)
+            {
+                Console.WriteLine("⛔ SubscribeToNotifications rejected: invalid or missing JWT");
+                await Clients.Caller.SendAsync("Error", "User not authenticated");
+                return;
+            }
+
+            // A token minted before the player's last password change must not keep working here either — the same
+            // check PlayCard and RequestLegalMoves repeat.
+            var player = await _playerRepository.FindByLoginAsync(payload.Login);
+            if (player is null || player.SessionVersion != payload.SessionVersion)
+            {
+                Console.WriteLine(
+                    "⛔ SubscribeToNotifications rejected: session retired by a password change"
+                );
+                await Clients.Caller.SendAsync("Error", "User not authenticated");
+                return;
+            }
+
+            await Groups.AddToGroupAsync(
+                Context.ConnectionId,
+                SignalRPlayerNotifier.GroupOf(payload.Login)
+            );
+
+            Console.WriteLine($"🔔 SubscribeToNotifications: {payload.Login} subscribed");
+        }
+
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
             // Handle player disconnection logic here if needed

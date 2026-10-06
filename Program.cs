@@ -102,6 +102,15 @@ builder.Services.AddScoped<IPasswordResetRepository, PasswordResetRepository>();
 builder.Services.AddScoped<ResetPasswordRequestValidator>();
 builder.Services.AddScoped<PasswordResetService>();
 
+// The inbox, and the friendships it announces (see plans/PLAN-022-notifications-and-friends/plan.md). The notifier is
+// the seam tests replace: it is what turns "a row was written" into a push to that player's own connections, since a
+// REST request has no way to address a connection itself.
+builder.Services.AddScoped<IFriendshipRepository, FriendshipRepository>();
+builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
+builder.Services.AddScoped<IPlayerNotifier, SignalRPlayerNotifier>();
+builder.Services.AddScoped<NotificationService>();
+builder.Services.AddScoped<FriendService>();
+
 // Recovery configuration, bound through the options system rather than read from environment variables directly.
 // A service reading the environment while Program.cs reads configuration is precisely the divergence that already
 // caused a 401 bug once (plans/PLAN-010-welcome-onboarding/plan.md §326); one source of truth is the fix.
@@ -143,6 +152,14 @@ var resetAttemptsPerAddressPerHour = builder.Configuration.GetValue(
     new PasswordResetOptions().ResetAttemptsPerIpPerHour
 );
 
+// The friend actions get their own window (see plans/PLAN-022-notifications-and-friends/plan.md §3.4): the pending
+// cap in FriendService bounds how many *outstanding* requests one account may have, while this bounds how fast one
+// address may ask and withdraw — which the cap alone cannot see.
+var friendRequestsPerAddressPerHour = builder.Configuration.GetValue(
+    "FriendRequests:RequestsPerIpPerHour",
+    60
+);
+
 builder.Services.AddRateLimiter(limiter =>
 {
     limiter.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -161,6 +178,27 @@ builder.Services.AddRateLimiter(limiter =>
                     new FixedWindowRateLimiterOptions
                     {
                         PermitLimit = resetAttemptsPerAddressPerHour,
+                        Window = TimeSpan.FromHours(1),
+                        QueueLimit = 0,
+                    }
+            );
+        }
+    );
+
+    limiter.AddPolicy(
+        FriendService.RateLimitPolicyName,
+        context =>
+        {
+            // Partitioned by client address, like the recovery policy above and with the same proxy caveat: behind a
+            // proxy this is the proxy's address unless ForwardedHeaders is configured.
+            var address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+            return RateLimitPartition.GetFixedWindowLimiter(
+                $"friend-request:{address}",
+                _ =>
+                    new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = friendRequestsPerAddressPerHour,
                         Window = TimeSpan.FromHours(1),
                         QueueLimit = 0,
                     }

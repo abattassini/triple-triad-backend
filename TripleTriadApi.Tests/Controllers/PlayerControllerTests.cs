@@ -313,13 +313,66 @@ namespace TripleTriadApi.Tests.Controllers
             Assert.Equal(1, root.GetProperty("ties").GetInt32());
             Assert.Equal(2, root.GetProperty("cardsOwned").GetInt32());
 
+            // …plus the pair's state from the *caller's* point of view, which is what the panel's friend button draws.
+            // These two have never asked each other, so it starts as none (PLAN-022 §3.7).
+            Assert.Equal(FriendshipStates.None, root.GetProperty("friendship").GetString());
+
             // The shape is closed: what this endpoint does not name does not travel — the email, the balance and the
             // pack count stay with their owner. Written as an exact set rather than absence checks so that a field
-            // added later has to be a deliberate decision about someone else seeing it.
+            // added later has to be a deliberate decision about someone else seeing it, which is exactly how
+            // `friendship` arrived here.
             Assert.Equal(
-                new[] { "avatarUrl", "cardsOwned", "experience", "login", "losses", "ties", "wins" },
+                new[]
+                {
+                    "avatarUrl",
+                    "cardsOwned",
+                    "experience",
+                    "friendship",
+                    "login",
+                    "losses",
+                    "ties",
+                    "wins",
+                },
                 root.EnumerateObject().Select(property => property.Name).OrderBy(name => name)
             );
+        }
+
+        [Fact]
+        public async Task Profile_ReportsTheFriendshipStateFromTheCallersPointOfView()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, PlayerLogin);
+            await SeedPlayerAsync(context, RivalLogin);
+
+            // One pending request, read back from both sides: the player who asked is told `requested`, the player who
+            // was asked is told `incoming`. That is what the single canonical row buys, and what the panel's button
+            // depends on — the same row means two different things depending on who is looking.
+            context.Friendships.Add(
+                new Friendship
+                {
+                    PlayerA = PlayerLogin,
+                    PlayerB = RivalLogin,
+                    Status = FriendshipStatus.Pending,
+                    RequestedBy = PlayerLogin,
+                    CreatedAt = DateTime.UtcNow,
+                }
+            );
+            await context.SaveChangesAsync();
+
+            var asCaller = await CreateController(context, PlayerLogin).Profile(RivalLogin);
+            var asRival = await CreateController(context, RivalLogin).Profile(PlayerLogin);
+
+            Assert.Equal(FriendshipStates.Requested, ReadFriendship(asCaller));
+            Assert.Equal(FriendshipStates.Incoming, ReadFriendship(asRival));
+        }
+
+        /// <summary>The `friendship` field of an `Ok` profile answer.</summary>
+        private static string? ReadFriendship(ActionResult<object> result)
+        {
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+
+            return json.RootElement.GetProperty("friendship").GetString();
         }
 
         [Theory]
@@ -442,7 +495,8 @@ namespace TripleTriadApi.Tests.Controllers
                 new RegisterPlayerRequestValidator(),
                 new ResetPasswordRequestValidator(),
                 new TokenService(),
-                PasswordRecoveryTestHarness.CreateService(context, new RecordingEmailSender())
+                PasswordRecoveryTestHarness.CreateService(context, new RecordingEmailSender()),
+                CreateFriendService(context)
             );
 
             var claims = login is null
@@ -459,6 +513,13 @@ namespace TripleTriadApi.Tests.Controllers
 
             return controller;
         }
+
+        /// <summary>
+        /// The friend service the profile action now needs, wired over the same in-memory context. The notifier is the
+        /// recording one: the profile read never pushes, and if it ever started to, the assertion here would see it.
+        /// </summary>
+        private static FriendService CreateFriendService(TripleTriadContext context) =>
+            FriendshipTestHarness.CreateFriendService(context);
 
         private static async Task SeedPlayerAsync(TripleTriadContext context, string login)
         {
