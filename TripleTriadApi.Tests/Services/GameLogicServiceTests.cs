@@ -21,6 +21,24 @@ namespace TripleTriadApi.Tests.Services
         private static readonly GameLogicService GameLogic = new();
 
         [Fact]
+        public void GetStartingPlayer_ReturnsPlayer1_WhenTheCoinComesUpZero()
+        {
+            Assert.Equal(
+                Player1,
+                GameLogic.GetStartingPlayer(Player1, Player2, new ScriptedRandom(0))
+            );
+        }
+
+        [Fact]
+        public void GetStartingPlayer_ReturnsPlayer2_WhenTheCoinComesUpOne()
+        {
+            Assert.Equal(
+                Player2,
+                GameLogic.GetStartingPlayer(Player1, Player2, new ScriptedRandom(1))
+            );
+        }
+
+        [Fact]
         public void PlayCard_StrictWins_CapturesEveryWeakerNeighbor_WithoutRules()
         {
             var result = PlayFourNeighborBoard();

@@ -795,6 +795,17 @@ namespace TripleTriadApi.Services
             return currentPlayer == player1Id ? player2Id : player1Id;
         }
 
+        /// <summary>
+        /// Who opens a match: player 1 or player 2, drawn at random once both seats are known. It replaces the old
+        /// "whoever created the match starts", so neither the waiting creator nor the joiner — nor the human against
+        /// the CPU — is favoured (see plans/PLAN-024-random-first-turn/plan.md). The draw goes through
+        /// <see cref="IRandomSource"/> so a test can script the coin.
+        /// </summary>
+        public string GetStartingPlayer(string player1Id, string player2Id, IRandomSource random)
+        {
+            return random.Next(2) == 0 ? player1Id : player2Id;
+        }
+
         public bool IsGameComplete(List<CardPlacement> placements)
         {
             return placements.Count >= 9;

@@ -24,7 +24,16 @@ namespace TripleTriadApi.Repositories
         /// </summary>
         Task<List<Match>> GetUnfinishedMatchesForPlayerAsync(string playerId);
 
-        Task<Match> CreateMatchAsync(string player1Id, string? player2Id, List<MatchRule> rules);
+        /// <summary>
+        /// Starts a match. <paramref name="startingPlayer"/> is the seat that opens it — drawn at random by the
+        /// caller once both seats are known, rather than assumed to be player 1 (PLAN-024).
+        /// </summary>
+        Task<Match> CreateMatchAsync(
+            string player1Id,
+            string? player2Id,
+            List<MatchRule> rules,
+            string startingPlayer
+        );
         Task<Match> UpdateMatchAsync(Match match);
         Task UpdatePlayerHandAsync(PlayerHand playerHand);
         Task<List<CardPlacement>> GetCardPlacementsAsync(int matchId);
@@ -48,8 +57,16 @@ namespace TripleTriadApi.Repositories
         /// followed by a save: the read says "available", and by the time a separate write runs it may not be. On
         /// success the tracked row (when there is one) is refreshed, because the guarded statement bypasses the change
         /// tracker — the same reason <c>TrySpendCoinsAsync</c> reads the balance back.
+        ///
+        /// <paramref name="startingPlayer"/> is written in the same statement as the seat: the opening turn is drawn
+        /// when the second player lands, so the seat and the turn can never disagree (PLAN-024).
         /// </summary>
-        Task<bool> TryClaimWaitingMatchAsync(int matchId, string playerId, DateTime now);
+        Task<bool> TryClaimWaitingMatchAsync(
+            int matchId,
+            string playerId,
+            DateTime now,
+            string startingPlayer
+        );
 
         /// <summary>The catalogue rows for the given ids — shorter than the input when an id does not exist.</summary>
         Task<List<Card>> GetCardsByIdsAsync(IReadOnlyCollection<int> cardIds);
@@ -107,6 +124,15 @@ namespace TripleTriadApi.Repositories
             PlayerHand? usedCard,
             Match match
         );
+
+        /// <summary>
+        /// Stamps <c>ActivatedAt</c> on an <c>active</c> match that does not have it yet — the moment both hands are
+        /// filed and the board opens, which is the reference the CPU's opening move is timed from (PLAN-024).
+        /// Deliberately narrow: it only ever writes that one column, and only where the stamp is still missing, so the
+        /// PvP paths (which stamp at join/claim) are untouched and a hand a caller just replaced is never disturbed.
+        /// Returns true when it stamped.
+        /// </summary>
+        Task<bool> TryActivateAsync(int matchId, DateTime now);
     }
 
     public class GameRepository(TripleTriadContext context) : IGameRepository
@@ -158,14 +184,17 @@ namespace TripleTriadApi.Repositories
         public async Task<Match> CreateMatchAsync(
             string player1Id,
             string? player2Id,
-            List<MatchRule> rules
+            List<MatchRule> rules,
+            string startingPlayer
         )
         {
             var match = new Match
             {
                 Player1Id = player1Id,
                 Player2Id = player2Id ?? string.Empty, // Empty string for waiting matches
-                CurrentPlayerTurn = player1Id, // Player 1 starts
+                // The opener, drawn at random by the caller once both seats are known (PLAN-024). A waiting match has
+                // only its creator to go on, so it carries them as a placeholder until the claim draws for real.
+                CurrentPlayerTurn = startingPlayer,
                 Status = string.IsNullOrEmpty(player2Id)
                     ? "waiting"
                     : (player2Id == "AI" ? "active" : "active"),
@@ -339,7 +368,8 @@ namespace TripleTriadApi.Repositories
         public async Task<bool> TryClaimWaitingMatchAsync(
             int matchId,
             string playerId,
-            DateTime now
+            DateTime now,
+            string startingPlayer
         )
         {
             if (_context.Database.IsInMemory())
@@ -359,6 +389,7 @@ namespace TripleTriadApi.Repositories
                 tracked.Player2Id = playerId;
                 tracked.Status = "active";
                 tracked.ActivatedAt = now;
+                tracked.CurrentPlayerTurn = startingPlayer;
                 await _context.SaveChangesAsync();
 
                 return true;
@@ -375,6 +406,7 @@ namespace TripleTriadApi.Repositories
                         .SetProperty(m => m.Player2Id, playerId)
                         .SetProperty(m => m.Status, "active")
                         .SetProperty(m => m.ActivatedAt, now)
+                        .SetProperty(m => m.CurrentPlayerTurn, startingPlayer)
                 );
 
             if (claimed == 0)
@@ -483,6 +515,39 @@ namespace TripleTriadApi.Repositories
             // in-memory store. Nothing here is a partial update, so a board can never disagree with the hand row and
             // the turn that describe it — see plans/PLAN-016-one-writer-per-turn/plan.md.
             await _context.SaveChangesAsync();
+        }
+
+        public async Task<bool> TryActivateAsync(int matchId, DateTime now)
+        {
+            if (_context.Database.IsInMemory())
+            {
+                // The in-memory provider has no bulk update (the same accommodation TryClaimWaitingMatchAsync makes),
+                // so the guarded read-modify-write is the only option there.
+                var tracked = await _context.Matches.FirstOrDefaultAsync(m => m.Id == matchId);
+                if (
+                    tracked is null
+                    || tracked.Status != "active"
+                    || tracked.ActivatedAt is not null
+                )
+                {
+                    return false;
+                }
+
+                tracked.ActivatedAt = now;
+                await _context.SaveChangesAsync();
+
+                return true;
+            }
+
+            // One guarded statement: the stamp only lands on a match that is active and still unstamped, so a PvP
+            // match (which stamped at join/claim) is left exactly as it was.
+            var activated = await _context
+                .Matches.Where(m =>
+                    m.Id == matchId && m.Status == "active" && m.ActivatedAt == null
+                )
+                .ExecuteUpdateAsync(setters => setters.SetProperty(m => m.ActivatedAt, now));
+
+            return activated > 0;
         }
     }
 }

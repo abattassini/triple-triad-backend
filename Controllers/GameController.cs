@@ -86,6 +86,35 @@ namespace TripleTriadApi.Controllers
             return User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
         }
 
+        /// <summary>
+        /// Stamps a match's activation the moment both hands are filed — the point the board opens. It matters for a
+        /// match against the CPU: the CPU's opening move is timed from <c>ActivatedAt</c>, so a CPU that drew the first
+        /// turn waits until the human's hand is in instead of playing over the SelectHand screen (PLAN-024). A no-op
+        /// while a hand is still missing, and while the stamp is already set (the PvP paths set it at join/claim).
+        /// </summary>
+        private async Task ActivateIfHandsReadyAsync(Match match)
+        {
+            if (match.Status != "active" || match.ActivatedAt is not null)
+            {
+                return;
+            }
+
+            var player1Hand = await _gameRepository.GetFiledHandCountAsync(
+                match.Id,
+                match.Player1Id
+            );
+            var player2Hand = await _gameRepository.GetFiledHandCountAsync(
+                match.Id,
+                match.Player2Id
+            );
+            if (player1Hand < GameLogicService.HandSize || player2Hand < GameLogicService.HandSize)
+            {
+                return;
+            }
+
+            await _gameRepository.TryActivateAsync(match.Id, DateTime.UtcNow);
+        }
+
         // Giving up a player's unfinished matches used to live here. It moved to MatchmakingService because it is part
         // of the matchmaking decision rather than of any one endpoint: it has to happen inside the same gate as the
         // find-or-create, or a search could give up a match that another search is about to claim.
@@ -171,8 +200,17 @@ namespace TripleTriadApi.Controllers
                 // rejected request still writes nothing.
                 await _matchmaking.AbandonUnfinishedAsync(playerId);
 
-                // Create new match with the requested rules
-                var match = await _gameRepository.CreateMatchAsync(playerId, opponent, rules);
+                // Create new match with the requested rules. Who opens is drawn here when both seats are known (the
+                // CPU, or a named opponent); a match waiting for a human carries the creator as a placeholder, and the
+                // claim draws the real opener once the opponent lands (PLAN-024).
+                var match = await _gameRepository.CreateMatchAsync(
+                    playerId,
+                    opponent,
+                    rules,
+                    string.IsNullOrEmpty(opponent)
+                        ? playerId
+                        : _gameLogic.GetStartingPlayer(playerId, opponent, _random)
+                );
 
                 var allCards = await _gameRepository.GetAllCardsAsync();
 
@@ -206,6 +244,11 @@ namespace TripleTriadApi.Controllers
                         player2Hand
                     );
                 }
+
+                // A CPU match is created active with both hands in (the legacy `CardIds` path): the board is open, so
+                // stamp the activation the CPU's opening move is timed from.
+                await ActivateIfHandsReadyAsync(match);
+
                 var playerHand = await _gameRepository.GetPlayerHandAsync(match.Id, playerId);
 
                 return Ok(
@@ -518,6 +561,10 @@ namespace TripleTriadApi.Controllers
 
                 await _gameRepository.ReplacePlayerHandAsync(matchId, playerId, handRead.Hand);
 
+                // Both hands may now be in (the CPU's was filed at creation): the board opens, so stamp the activation
+                // a CPU opening move would be timed from (PLAN-024).
+                await ActivateIfHandsReadyAsync(match);
+
                 // The opponent may be sitting on "waiting for your opponent to pick their cards" (or still picking):
                 // both hands are in now, so whoever is waiting can go to the board.
                 await _notifier.HandReadyAsync(matchId);
@@ -662,10 +709,16 @@ namespace TripleTriadApi.Controllers
                 await _matchmaking.AbandonUnfinishedAsync(playerId);
 
                 // Seat the second player and stamp the activation: the hand-pick timeout and the "nobody moved"
-                // timeout are both measured from here.
+                // timeout are both measured from here. The opening turn is drawn now that both seats are known, so the
+                // joiner may open just as the creator may (PLAN-024).
                 match.Player2Id = playerId;
                 match.Status = "active";
                 match.ActivatedAt = DateTime.UtcNow;
+                match.CurrentPlayerTurn = _gameLogic.GetStartingPlayer(
+                    match.Player1Id,
+                    playerId,
+                    _random
+                );
 
                 if (player2Hand.Count > 0)
                 {

@@ -32,6 +32,8 @@ namespace TripleTriadApi.Services
         IGameRepository gameRepository,
         IMatchNotifier notifier,
         TripleTriadContext context,
+        GameLogicService gameLogic,
+        IRandomSource random,
         ILogger<MatchmakingService> logger
     )
     {
@@ -103,7 +105,16 @@ namespace TripleTriadApi.Services
                         break;
                     }
 
-                    if (await gameRepository.TryClaimWaitingMatchAsync(candidate.Id, playerId, now))
+                    // The opener is drawn the moment the second seat lands — neither the waiting creator nor the joiner
+                    // is favoured (PLAN-024). It is written in the same guarded statement that seats the player.
+                    if (
+                        await gameRepository.TryClaimWaitingMatchAsync(
+                            candidate.Id,
+                            playerId,
+                            now,
+                            gameLogic.GetStartingPlayer(candidate.Player1Id, playerId, random)
+                        )
+                    )
                     {
                         return candidate;
                     }
@@ -116,8 +127,9 @@ namespace TripleTriadApi.Services
                     );
                 }
 
-                // Nobody compatible is waiting, so start the match and be the one who is found.
-                return await gameRepository.CreateMatchAsync(playerId, null, rules);
+                // Nobody compatible is waiting, so start the match and be the one who is found. The opener is a
+                // placeholder here — there is no second player to draw against yet — and the claim draws the real one.
+                return await gameRepository.CreateMatchAsync(playerId, null, rules, playerId);
             });
         }
 

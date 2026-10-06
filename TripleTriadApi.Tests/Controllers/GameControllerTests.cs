@@ -303,6 +303,65 @@ namespace TripleTriadApi.Tests.Controllers
         }
 
         [Fact]
+        public async Task CreateMatch_AgainstTheCpu_TheOpeningTurnIsDrawn()
+        {
+            using var humanContext = CreateContext();
+            await SeedAsync(humanContext);
+            // The coin names the human, so the human opens — as before the draw existed.
+            var humanOpens = CreateController(
+                humanContext,
+                PlayerLogin,
+                random: new FixedRandom(0)
+            );
+            await humanOpens.CreateMatch(new CreateMatchRequest { OpponentId = CpuOpponent.Login });
+
+            Assert.Equal(
+                PlayerLogin,
+                (await humanContext.Matches.AsNoTracking().SingleAsync()).CurrentPlayerTurn
+            );
+
+            using var cpuContext = CreateContext();
+            await SeedAsync(cpuContext);
+            // The coin names the CPU, so the CPU opens — no longer always the human who created the match.
+            var cpuOpens = CreateController(cpuContext, PlayerLogin, random: new FixedRandom(1));
+            await cpuOpens.CreateMatch(new CreateMatchRequest { OpponentId = CpuOpponent.Login });
+
+            Assert.Equal(
+                CpuOpponent.Login,
+                (await cpuContext.Matches.AsNoTracking().SingleAsync()).CurrentPlayerTurn
+            );
+        }
+
+        [Fact]
+        public async Task CreateMatch_AgainstTheCpu_ActivatesOnlyOnceBothHandsAreIn()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context);
+            // The CPU is drawn to open; it must still wait for the human's hand.
+            var controller = CreateController(context, PlayerLogin, random: new FixedRandom(1));
+
+            var result = await controller.CreateMatch(
+                new CreateMatchRequest { OpponentId = CpuOpponent.Login, PickHandLater = true }
+            );
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+            var matchId = json.RootElement.GetProperty("match").GetProperty("Id").GetInt32();
+
+            // The CPU's hand is filed at creation and the human's is not, so the match is not activated yet — which
+            // is exactly what keeps the CPU from opening over the SelectHand screen.
+            Assert.Null(
+                (await context.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId)).ActivatedAt
+            );
+
+            // Filing the human's hand opens the board and stamps the activation the CPU's opening is timed from.
+            await controller.SetHand(matchId, new SetHandRequest { CardIds = FirstHand });
+
+            Assert.NotNull(
+                (await context.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId)).ActivatedAt
+            );
+        }
+
+        [Fact]
         public async Task CreateMatch_WithPickHandLaterAndAHumanOpponent_Returns400()
         {
             using var context = CreateContext();
@@ -422,6 +481,53 @@ namespace TripleTriadApi.Tests.Controllers
 
             // And nobody is ready until both hands arrive through POST match/{id}/hand.
             Assert.False((await ReadStateAsync(joiner, matchId)).HandsReady);
+        }
+
+        [Fact]
+        public async Task JoinMatch_TheOpeningTurnIsDrawn()
+        {
+            // The creator waits, then the joiner seats — and either of them may be drawn to open.
+            using var creatorContext = CreateContext();
+            await SeedAsync(creatorContext);
+            var creator = CreateController(creatorContext, PlayerLogin);
+            await creator.CreateMatch(new CreateMatchRequest { PickHandLater = true });
+            var matchId = await creatorContext.Matches.Select(match => match.Id).SingleAsync();
+
+            // The coin names the first of the pair, i.e. the creator.
+            var creatorOpens = CreateController(
+                creatorContext,
+                OpponentLogin,
+                random: new FixedRandom(0)
+            );
+            await creatorOpens.JoinMatch(matchId, new JoinMatchRequest { PickHandLater = true });
+
+            Assert.Equal(
+                PlayerLogin,
+                (
+                    await creatorContext.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId)
+                ).CurrentPlayerTurn
+            );
+
+            using var joinerContext = CreateContext();
+            await SeedAsync(joinerContext);
+            var creator2 = CreateController(joinerContext, PlayerLogin);
+            await creator2.CreateMatch(new CreateMatchRequest { PickHandLater = true });
+            var matchId2 = await joinerContext.Matches.Select(match => match.Id).SingleAsync();
+
+            // The coin names the second of the pair, i.e. the joiner.
+            var joinerOpens = CreateController(
+                joinerContext,
+                OpponentLogin,
+                random: new FixedRandom(1)
+            );
+            await joinerOpens.JoinMatch(matchId2, new JoinMatchRequest { PickHandLater = true });
+
+            Assert.Equal(
+                OpponentLogin,
+                (
+                    await joinerContext.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId2)
+                ).CurrentPlayerTurn
+            );
         }
 
         [Fact]
@@ -845,6 +951,10 @@ namespace TripleTriadApi.Tests.Controllers
             // MatchmakingService: two instances would send those pushes to a recorder the test never looks at.
             var matchNotifier = notifier ?? new RecordingMatchNotifier();
 
+            // One rng for both, so a scripted draw pins the opening turn wherever it is taken: the controller's
+            // CreateMatch/JoinMatch, or MatchmakingService's claim.
+            var rng = random ?? new SystemRandomSource();
+
             var controller = new GameController(
                 gameRepository,
                 new PlayerCardRepository(context),
@@ -856,11 +966,13 @@ namespace TripleTriadApi.Tests.Controllers
                 ),
                 new MatchStateService(gameRepository),
                 matchNotifier,
-                random ?? new SystemRandomSource(),
+                rng,
                 new MatchmakingService(
                     gameRepository,
                     matchNotifier,
                     context,
+                    gameLogic,
+                    rng,
                     NullLogger<MatchmakingService>.Instance
                 )
             );
@@ -986,6 +1098,16 @@ namespace TripleTriadApi.Tests.Controllers
 
         /// <summary>A level in 1..10 for the ids these tests use, so no seeded card has level 0.</summary>
         private static int LevelOf(int cardId) => (cardId - 1) % 10 + 1;
+
+        /// <summary>
+        /// Always draws <paramref name="value"/>, clamped into the range each call asks for. Clamping keeps one
+        /// instance safe for a later draw whose pool holds a single element (the CPU hand), so a test can pin the
+        /// opening-turn coin — a draw of 2 — without scripting every draw after it.
+        /// </summary>
+        private sealed class FixedRandom(int value) : IRandomSource
+        {
+            public int Next(int exclusiveMax) => Math.Min(value, exclusiveMax - 1);
+        }
 
         /// <summary>
         /// An rng that always takes the top of the range, i.e. the strongest card the CPU's draw can reach — the

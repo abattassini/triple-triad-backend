@@ -58,6 +58,41 @@ namespace TripleTriadApi.Tests.Services
         }
 
         [Fact]
+        public async Task WhenJoining_TheOpeningTurnIsDrawn_AndTheWaitingCreatorMayOpen()
+        {
+            using var context = CreateContext(Guid.NewGuid().ToString());
+            var waiting = await SeedWaitingMatchAsync(context, "opponent", MatchRule.Same);
+            // The coin comes up 0: the first of the pair, i.e. the creator who was already waiting.
+            var (service, _) = CreateService(context, random: new FixedRandom(0));
+
+            var match = await service.FindOrCreateWaitingMatchAsync("argel", [MatchRule.Same], Now);
+
+            Assert.Equal(waiting.Id, match.Id);
+            Assert.Equal("opponent", match.Player1Id);
+            Assert.Equal("argel", match.Player2Id);
+            Assert.Equal("opponent", match.CurrentPlayerTurn);
+
+            // Persisted, not merely on the returned object.
+            var stored = await context.Matches.AsNoTracking().SingleAsync(m => m.Id == match.Id);
+            Assert.Equal("opponent", stored.CurrentPlayerTurn);
+        }
+
+        [Fact]
+        public async Task WhenJoining_TheOpeningTurnIsDrawn_AndTheJoinerMayOpen()
+        {
+            using var context = CreateContext(Guid.NewGuid().ToString());
+            await SeedWaitingMatchAsync(context, "opponent", MatchRule.Same);
+            // The coin comes up 1: the second of the pair, i.e. the joiner — no longer the creator by default.
+            var (service, _) = CreateService(context, random: new FixedRandom(1));
+
+            var match = await service.FindOrCreateWaitingMatchAsync("argel", [MatchRule.Same], Now);
+
+            Assert.Equal("argel", match.CurrentPlayerTurn);
+            var stored = await context.Matches.AsNoTracking().SingleAsync(m => m.Id == match.Id);
+            Assert.Equal("argel", stored.CurrentPlayerTurn);
+        }
+
+        [Fact]
         public async Task WithOnlyDifferentRulesWaiting_StartsItsOwnMatch()
         {
             using var context = CreateContext(Guid.NewGuid().ToString());
@@ -214,7 +249,8 @@ namespace TripleTriadApi.Tests.Services
 
         private static (MatchmakingService Service, RecordingMatchNotifier Notifier) CreateService(
             TripleTriadContext context,
-            RecordingMatchNotifier? notifier = null
+            RecordingMatchNotifier? notifier = null,
+            IRandomSource? random = null
         )
         {
             var matchNotifier = notifier ?? new RecordingMatchNotifier();
@@ -224,6 +260,8 @@ namespace TripleTriadApi.Tests.Services
                     new GameRepository(context),
                     matchNotifier,
                     context,
+                    new GameLogicService(),
+                    random ?? new SystemRandomSource(),
                     NullLogger<MatchmakingService>.Instance
                 ),
                 matchNotifier
@@ -240,6 +278,16 @@ namespace TripleTriadApi.Tests.Services
                     .UseInMemoryDatabase(databaseName, root)
                     .Options
             );
+
+        /// <summary>
+        /// Always draws <paramref name="value"/>, clamped into the range each call asks for. Clamping keeps one
+        /// instance safe for a later draw whose pool holds a single element (the CPU hand), so a test can pin the
+        /// opening-turn coin — a draw of 2 — without scripting every draw after it.
+        /// </summary>
+        private sealed class FixedRandom(int value) : IRandomSource
+        {
+            public int Next(int exclusiveMax) => Math.Min(value, exclusiveMax - 1);
+        }
 
         /// <summary>
         /// Records the pushes matchmaking makes — only abandonment here, which is the one this service sends. The rest
