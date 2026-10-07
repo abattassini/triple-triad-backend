@@ -5,7 +5,7 @@ namespace TripleTriadApi.Services
     /// <summary>
     /// The payloads a board is built from, in one place because more than one sender uses them: the hub, for the moves a
     /// player makes over SignalR and for the answer to <c>RequestLegalMoves</c>, and <see cref="SignalRMatchNotifier"/>,
-    /// for the moves the server makes on a client's behalf (the CPU) and for the matches it settles on its own (a
+    /// for the moves the server makes on a client's behalf (the bot) and for the matches it settles on its own (a
     /// timeout). The pushes are the anonymous objects the hub has always sent, so every field name here is a field name
     /// in the client — change one and the board changes.
     /// </summary>

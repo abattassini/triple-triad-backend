@@ -61,7 +61,7 @@ namespace TripleTriadApi.Tests.Controllers
 
         [Theory]
         [InlineData("nobody-here")]
-        [InlineData(CpuOpponent.Login)] // the CPU sentinel: an identity, never a friend
+        [InlineData(TestBots.Login)] // the bot sentinel: an identity, never a friend
         public async Task RequestFriend_ForAPlayerWhoDoesNotExist_Is404(string login)
         {
             using var context = CreateContext();

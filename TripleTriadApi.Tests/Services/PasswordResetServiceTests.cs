@@ -7,7 +7,7 @@ using TripleTriadApi.Services;
 namespace TripleTriadApi.Tests.Services
 {
     /// <summary>
-    /// Tests for password recovery's rules: a code is issued only for a real, non-CPU account, what is stored is a
+    /// Tests for password recovery's rules: a code is issued only for a real, non-bot account, what is stored is a
     /// hash and never the code, the layered limits refuse in the right order, and spending a code changes the password
     /// exactly once while retiring every session the player already had.
     ///
@@ -71,15 +71,15 @@ namespace TripleTriadApi.Tests.Services
         }
 
         [Fact]
-        public async Task RequestReset_ForTheCpuSentinel_IssuesNothing()
+        public async Task RequestReset_ForABot_IssuesNothing()
         {
             using var context = CreateContext();
-            await SeedPlayerAsync(context, login: CpuOpponent.Login, email: "cpu@example.com");
+            await SeedPlayerAsync(context, login: "cpu-bot", email: "cpu@example.com", isBot: true);
             var (service, mail) = CreateService(context);
 
             var outcome = await service.RequestResetAsync("cpu@example.com", "203.0.113.7", Now);
 
-            // The CPU is a real row with a real login, and no human may take it over.
+            // A bot is a real row with a real login, but no human may take it over.
             Assert.Equal(RecoveryRequestOutcome.NoSuchAccount, outcome);
             Assert.Empty(mail.Sent);
         }
@@ -94,7 +94,8 @@ namespace TripleTriadApi.Tests.Services
         private static async Task SeedPlayerAsync(
             TripleTriadContext context,
             string login = PlayerLogin,
-            string email = PlayerEmail
+            string email = PlayerEmail,
+            bool isBot = false
         )
         {
             context.Players.Add(
@@ -104,6 +105,7 @@ namespace TripleTriadApi.Tests.Services
                     Email = email,
                     PasswordHash = new PasswordHasherService().Hash(OldPassword),
                     CreatedAt = Now,
+                    IsBot = isBot,
                 }
             );
 

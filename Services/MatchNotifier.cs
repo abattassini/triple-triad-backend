@@ -17,7 +17,7 @@ namespace TripleTriadApi.Services
 
     /// <summary>
     /// The pushes a match needs from outside the hub: the hub only broadcasts what happens inside a connection, while
-    /// filing a hand, cancelling a match, the timeout sweep and the CPU's own moves all run in a REST request or a
+    /// filing a hand, cancelling a match, the timeout sweep and the bot's own moves all run in a REST request or a
     /// background job. It is an interface because tests have no web host — they record the calls instead.
     /// </summary>
     public interface IMatchNotifier
@@ -36,7 +36,7 @@ namespace TripleTriadApi.Services
         );
 
         /// <summary>
-        /// A move the server played for a client (the CPU): the same `CardPlayed` the hub sends for a human move, plus
+        /// A move the server played for a client (the bot): the same `CardPlayed` the hub sends for a human move, plus
         /// `GameCompleted` when that move filled the board.
         /// </summary>
         Task CardPlayedAsync(MovePush move);

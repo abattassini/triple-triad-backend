@@ -4,17 +4,17 @@ using TripleTriadApi.Services;
 namespace TripleTriadApi.Tests.Services
 {
     /// <summary>
-    /// Tests for how the CPU chooses its move. The selector is a pure function over the models — the board, the
+    /// Tests for how the bot chooses its move. The selector is a pure function over the models — the board, the
     /// hand, the match — so these tests need no database and no host: they build a position, run it and assert on the
     /// move that comes back. Each name says what the choice is about: it takes a capture, prefers the bigger one,
     /// keeps its strong cards, and always plays a legal card.
     /// </summary>
-    public class CpuMoveSelectorTests
+    public class BotMoveSelectorTests
     {
         [Fact]
         public void Select_TakesTheCapture_WhenOneIsAvailable()
         {
-            // One of argel's weak cards sits in the centre; only the CPU's strong card can beat it, from any of the
+            // One of argel's weak cards sits in the centre; only the bot's strong card can beat it, from any of the
             // four cells around it.
             var board = new List<CardPlacement> { PlacedAt(WeakCard(101), "argel", 1, 1) };
             var hand = new List<PlayerHand> { InHand(WeakCard(201)), InHand(StrongCard(202)) };
@@ -73,7 +73,7 @@ namespace TripleTriadApi.Tests.Services
                     board.Add(
                         PlacedAt(
                             WeakCard(100 + x * 3 + y),
-                            y % 2 == 0 ? "argel" : CpuOpponent.Login,
+                            y % 2 == 0 ? "argel" : TestBots.Login,
                             x,
                             y
                         )
@@ -104,12 +104,18 @@ namespace TripleTriadApi.Tests.Services
         [Fact]
         public void Select_ReturnsNull_WhenThereIsNothingToPlay()
         {
-            var selector = new CpuMoveSelector(new GameLogicService());
+            var selector = new BotMoveSelector(new GameLogicService());
             var match = ActiveMatch();
 
             // Every card already played…
             Assert.Null(
-                selector.Select(match, [], [InHand(WeakCard(201), isUsed: true)], new FixedRandom(0))
+                selector.Select(
+                    match,
+                    [],
+                    [InHand(WeakCard(201), isUsed: true)],
+                    TestBots.Login,
+                    new FixedRandom(0)
+                )
             );
 
             // …or every cell already taken.
@@ -123,7 +129,13 @@ namespace TripleTriadApi.Tests.Services
             }
 
             Assert.Null(
-                selector.Select(match, fullBoard, [InHand(WeakCard(202))], new FixedRandom(0))
+                selector.Select(
+                    match,
+                    fullBoard,
+                    [InHand(WeakCard(202))],
+                    TestBots.Login,
+                    new FixedRandom(0)
+                )
             );
         }
 
@@ -142,27 +154,33 @@ namespace TripleTriadApi.Tests.Services
         }
 
         /// <summary>Run the selector and unwrap the move, with the scripted tie-break these tests expect by default.</summary>
-        private static CpuMoveSelector.Move Select(
+        private static BotMoveSelector.Move Select(
             Match match,
             IReadOnlyCollection<CardPlacement> board,
             IReadOnlyCollection<PlayerHand> hand,
             IRandomSource? random = null
         )
         {
-            var selector = new CpuMoveSelector(new GameLogicService());
-            var move = selector.Select(match, board, hand, random ?? new FixedRandom(0));
+            var selector = new BotMoveSelector(new GameLogicService());
+            var move = selector.Select(
+                match,
+                board,
+                hand,
+                TestBots.Login,
+                random ?? new FixedRandom(0)
+            );
 
-            return Assert.IsType<CpuMoveSelector.Move>(move);
+            return Assert.IsType<BotMoveSelector.Move>(move);
         }
 
-        /// <summary>The position the CPU is always choosing in: an active match in which it is its turn.</summary>
+        /// <summary>The position the bot is always choosing in: an active match in which it is its turn.</summary>
         private static Match ActiveMatch() =>
             new()
             {
                 Id = 1,
                 Player1Id = "argel",
-                Player2Id = CpuOpponent.Login,
-                CurrentPlayerTurn = CpuOpponent.Login,
+                Player2Id = TestBots.Login,
+                CurrentPlayerTurn = TestBots.Login,
                 Status = "active",
                 Player1Score = GameLogicService.HandSize,
                 Player2Score = GameLogicService.HandSize,
@@ -201,7 +219,7 @@ namespace TripleTriadApi.Tests.Services
         private static PlayerHand InHand(Card card, bool isUsed = false) =>
             new()
             {
-                PlayerId = CpuOpponent.Login,
+                PlayerId = TestBots.Login,
                 CardId = card.Id,
                 Card = card,
                 IsUsed = isUsed,

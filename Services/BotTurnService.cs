@@ -3,20 +3,20 @@ using TripleTriadApi.Repositories;
 namespace TripleTriadApi.Services
 {
     /// <summary>
-    /// Plays the CPU's turns. Every active match whose turn belongs to <see cref="CpuOpponent.Login"/> gets one move
-    /// as soon as its thinking time has passed, played through <see cref="GamePlayService"/> — the same pipeline REST
-    /// and SignalR use — and then pushed into the match group, so the human's board follows it exactly as it follows
-    /// another person's.
+    /// Plays the bots' turns. Every active match whose turn belongs to a bot (plans/PLAN-025-bots/plan.md §3.4) gets
+    /// one move as soon as its thinking time has passed, played through <see cref="GamePlayService"/> — the same
+    /// pipeline REST and SignalR use — and then pushed into the match group, so the human's board follows it exactly
+    /// as it follows another person's.
     ///
     /// A sweep rather than a task scheduled per move, for the same reasons as <see cref="MatchTimeoutService"/>: an
     /// overdue move is simply due again after a restart or a redeploy, one pass can never overlap another, and the
     /// whole thing is a static method taking <c>now</c> so the tests drive it with no host and no timer.
     /// </summary>
-    public class CpuTurnService(IServiceScopeFactory scopeFactory) : BackgroundService
+    public class BotTurnService(IServiceScopeFactory scopeFactory) : BackgroundService
     {
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            using var timer = new PeriodicTimer(CpuOpponent.PollInterval);
+            using var timer = new PeriodicTimer(BotOpponent.PollInterval);
 
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
@@ -25,9 +25,10 @@ namespace TripleTriadApi.Services
                 await AdvanceAsync(
                     scope.ServiceProvider.GetRequiredService<IGameRepository>(),
                     scope.ServiceProvider.GetRequiredService<GamePlayService>(),
-                    scope.ServiceProvider.GetRequiredService<CpuMoveSelector>(),
+                    scope.ServiceProvider.GetRequiredService<BotMoveSelector>(),
                     scope.ServiceProvider.GetRequiredService<IMatchNotifier>(),
                     scope.ServiceProvider.GetRequiredService<IRandomSource>(),
+                    scope.ServiceProvider.GetRequiredService<BotRegistry>(),
                     DateTime.UtcNow,
                     stoppingToken
                 );
@@ -41,28 +42,38 @@ namespace TripleTriadApi.Services
         public static async Task AdvanceAsync(
             IGameRepository gameRepository,
             GamePlayService gamePlayService,
-            CpuMoveSelector moveSelector,
+            BotMoveSelector moveSelector,
             IMatchNotifier notifier,
             IRandomSource random,
+            BotRegistry bots,
             DateTime now,
             CancellationToken cancellationToken = default
         )
         {
-            foreach (var match in await gameRepository.GetMatchesAwaitingTurnAsync(CpuOpponent.Login))
+            var botLogins = bots.Bots.Select(bot => bot.Login).ToList();
+
+            foreach (var match in await gameRepository.GetMatchesAwaitingBotTurnAsync(botLogins))
             {
                 if (cancellationToken.IsCancellationRequested)
                 {
                     return;
                 }
 
-                var board = match.CardPlacements.ToList();
-                if (!CpuOpponent.IsMoveDue(match, board, now))
+                // The bot on turn is the match's current player — captured now, because playing flips the turn.
+                var actor = match.CurrentPlayerTurn;
+                if (string.IsNullOrEmpty(actor))
                 {
                     continue;
                 }
 
-                var hand = match.PlayerHands.Where(row => row.PlayerId == CpuOpponent.Login).ToList();
-                var move = moveSelector.Select(match, board, hand, random);
+                var board = match.CardPlacements.ToList();
+                if (!BotOpponent.IsMoveDue(match, board, now))
+                {
+                    continue;
+                }
+
+                var hand = match.PlayerHands.Where(row => row.PlayerId == actor).ToList();
+                var move = moveSelector.Select(match, board, hand, actor, random);
                 if (move is null)
                 {
                     continue;
@@ -75,7 +86,7 @@ namespace TripleTriadApi.Services
                     move.CardId,
                     move.X,
                     move.Y,
-                    CpuOpponent.Login
+                    actor
                 );
 
                 if (!result.IsSuccess || result.GameResult is null || result.UpdatedMatch is null)
@@ -88,7 +99,7 @@ namespace TripleTriadApi.Services
                         result.UpdatedMatch,
                         result.GameResult,
                         result.Rewards,
-                        CpuOpponent.Login,
+                        actor,
                         move.CardId,
                         move.X,
                         move.Y

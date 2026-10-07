@@ -7,7 +7,7 @@ using TripleTriadApi.Services;
 namespace TripleTriadApi.Tests.Services
 {
     /// <summary>
-    /// A mail transport that records instead of sending — the same idea as the recording match notifier the CPU and
+    /// A mail transport that records instead of sending — the same idea as the recording match notifier the bot and
     /// timeout tests use. Mail becomes a value that can be asserted on, and no SMTP server is ever involved.
     ///
     /// It doubles as the development transport's stand-in for anything that only needs *a* sender: the controller

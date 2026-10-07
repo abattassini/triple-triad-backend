@@ -884,23 +884,23 @@ namespace TripleTriadApi.Tests.Services
         }
 
         /// <summary>
-        /// The odds table of the CPU's opening hand: weight <c>level²</c> over the levels 1..10, so level 10 owns
+        /// The odds table of the bot's opening hand: weight <c>level²</c> over the levels 1..10, so level 10 owns
         /// 25.97% of a slot and level 1 0.26%. Rising weights are what makes the hand come out strong — a flat draw
         /// would leave it at the catalogue's own level 5.6.
         /// </summary>
         [Fact]
-        public void GetCpuHand_LevelWeights_ClimbWithTheSquareOfTheLevel()
+        public void GetBotHand_LevelWeights_ClimbWithTheSquareOfTheLevel()
         {
             var weights = Enumerable
                 .Range(Card.MinLevel, Card.MaxLevel - Card.MinLevel + 1)
-                .Select(CpuOpponent.HandLevelWeight)
+                .Select(BotOpponent.HandLevelWeight)
                 .ToList();
 
             Assert.Equal(new[] { 1, 4, 9, 16, 25, 36, 49, 64, 81, 100 }, weights);
-            Assert.Equal(weights.Sum(), CpuOpponent.TotalHandLevelWeight);
-            Assert.Equal(385, CpuOpponent.TotalHandLevelWeight);
+            Assert.Equal(weights.Sum(), BotOpponent.TotalHandLevelWeight);
+            Assert.Equal(385, BotOpponent.TotalHandLevelWeight);
 
-            var total = CpuOpponent.TotalHandLevelWeight;
+            var total = BotOpponent.TotalHandLevelWeight;
             Assert.Equal(25.97, Math.Round(weights[9] * 100.0 / total, 2));
             Assert.Equal(0.26, Math.Round(weights[0] * 100.0 / total, 2));
         }
@@ -929,19 +929,19 @@ namespace TripleTriadApi.Tests.Services
         [InlineData(284, 9)]
         [InlineData(285, 10)] // level 10 owns slots 285..384 (weight 100)
         [InlineData(384, 10)]
-        public void GetCpuHand_FirstSlot_FollowsTheLevelTable(int pick, int expectedLevel)
+        public void GetBotHand_FirstSlot_FollowsTheLevelTable(int pick, int expectedLevel)
         {
             var random = new ScriptedRandom(pick);
 
-            var hand = GameLogic.GetCpuHand(OneCardPerLevelCatalogue(), random);
+            var hand = GameLogic.GetBotHand(OneCardPerLevelCatalogue(), random);
 
-            Assert.Equal(CpuOpponent.TotalHandLevelWeight, random.Bounds[0]);
+            Assert.Equal(BotOpponent.TotalHandLevelWeight, random.Bounds[0]);
             Assert.Equal(expectedLevel, hand[0].Level);
         }
 
         /// <summary>The level is drawn first, then the card inside it — the level pick is the draw's first call.</summary>
         [Fact]
-        public void GetCpuHand_PicksTheCardWithinTheChosenLevel()
+        public void GetBotHand_PicksTheCardWithinTheChosenLevel()
         {
             // Levels 10 and 1 only, so the 101 slots are level 10's 100 and then level 1's single one.
             var catalogue = new List<Card>
@@ -955,7 +955,7 @@ namespace TripleTriadApi.Tests.Services
             };
             var random = new ScriptedRandom(1, 1);
 
-            var hand = GameLogic.GetCpuHand(catalogue, random);
+            var hand = GameLogic.GetBotHand(catalogue, random);
 
             Assert.Equal(2, hand[0].Id); // the second of level 10's three cards
             Assert.Equal(GameLogicService.HandSize, hand.Count);
@@ -967,20 +967,20 @@ namespace TripleTriadApi.Tests.Services
         /// cards are used — which is what stops a strong-but-thin level from filling a whole hand.
         /// </summary>
         [Fact]
-        public void GetCpuHand_TopOfEveryRange_BringsTheStrongestLevelsLeft()
+        public void GetBotHand_TopOfEveryRange_BringsTheStrongestLevelsLeft()
         {
-            var hand = GameLogic.GetCpuHand(OneCardPerLevelCatalogue(), new ScriptedRandom());
+            var hand = GameLogic.GetBotHand(OneCardPerLevelCatalogue(), new ScriptedRandom());
 
             Assert.Equal(new[] { 10, 9, 8, 7, 6 }, hand.Select(card => card.Level));
         }
 
         /// <summary>The mirror image: the bottom of every range walks up the levels instead.</summary>
         [Fact]
-        public void GetCpuHand_BottomOfEveryRange_BringsTheWeakestLevelsLeft()
+        public void GetBotHand_BottomOfEveryRange_BringsTheWeakestLevelsLeft()
         {
             var random = new ScriptedRandom(0, 0, 0, 0, 0, 0, 0, 0, 0, 0); // one value per call, ten calls
 
-            var hand = GameLogic.GetCpuHand(OneCardPerLevelCatalogue(), random);
+            var hand = GameLogic.GetBotHand(OneCardPerLevelCatalogue(), random);
 
             Assert.Equal(new[] { 1, 2, 3, 4, 5 }, hand.Select(card => card.Level));
         }
@@ -990,7 +990,7 @@ namespace TripleTriadApi.Tests.Services
         /// the range is level 9, and a level-1 card is still only one of the 82 slots.
         /// </summary>
         [Fact]
-        public void GetCpuHand_RenormalisesOverTheLevelsTheCatalogueHas()
+        public void GetBotHand_RenormalisesOverTheLevelsTheCatalogueHas()
         {
             var catalogue = new List<Card>
             {
@@ -1003,20 +1003,20 @@ namespace TripleTriadApi.Tests.Services
             };
             var random = new ScriptedRandom();
 
-            var hand = GameLogic.GetCpuHand(catalogue, random);
+            var hand = GameLogic.GetBotHand(catalogue, random);
 
-            Assert.Equal(1 + CpuOpponent.HandLevelWeight(9), random.Bounds[0]);
+            Assert.Equal(1 + BotOpponent.HandLevelWeight(9), random.Bounds[0]);
             Assert.Equal(GameLogicService.HandSize, hand.Count);
             Assert.All(hand, card => Assert.Equal(9, card.Level));
         }
 
         /// <summary>A catalogue smaller than a hand yields what it has — no draw runs past the end of a pool.</summary>
         [Fact]
-        public void GetCpuHand_WithFewerCardsThanAHand_TakesThemAll()
+        public void GetBotHand_WithFewerCardsThanAHand_TakesThemAll()
         {
             var catalogue = new List<Card> { LevelCard(1, 4), LevelCard(2, 4), LevelCard(3, 9) };
 
-            var hand = GameLogic.GetCpuHand(catalogue, new ScriptedRandom());
+            var hand = GameLogic.GetBotHand(catalogue, new ScriptedRandom());
 
             Assert.Equal(3, hand.Count);
             Assert.All(hand, card => Assert.Contains(card, catalogue));

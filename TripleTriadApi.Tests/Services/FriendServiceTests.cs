@@ -143,15 +143,15 @@ namespace TripleTriadApi.Tests.Services
         }
 
         [Fact]
-        public async Task Request_ForTheCpuSentinel_IsRefusedAsAnUnknownPlayer()
+        public async Task Request_ForTheBotSentinel_IsRefusedAsAnUnknownPlayer()
         {
             using var context = CreateContext();
             await SeedPlayerAsync(context, Me);
             var service = FriendshipTestHarness.CreateFriendService(context);
 
-            // The CPU plays under a sentinel login with no Players row, so it is refused by the same check that refuses
+            // The bot plays under a sentinel login with no Players row, so it is refused by the same check that refuses
             // any unknown login — an identity that is not a player, rather than a special case.
-            var result = await service.RequestAsync(Me, CpuOpponent.Login);
+            var result = await service.RequestAsync(Me, TestBots.Login);
 
             Assert.False(result.Succeeded);
             Assert.Equal(FriendService.FriendFailure.UnknownPlayer, result.Failure);

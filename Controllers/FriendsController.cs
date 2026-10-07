@@ -144,7 +144,7 @@ namespace TripleTriadApi.Controllers
         }
 
         /// <summary>
-        /// The one place a refusal becomes a status code: an unknown login is a `404` (which is also how the CPU
+        /// The one place a refusal becomes a status code: an unknown login is a `404` (which is also how the bot
         /// sentinel is refused — it has no row), a conflict is a `409`, and everything else the service refuses is a
         /// `400` with its sentence.
         /// </summary>

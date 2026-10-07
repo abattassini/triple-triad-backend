@@ -3,34 +3,30 @@ using TripleTriadApi.Models;
 namespace TripleTriadApi.Services
 {
     /// <summary>
-    /// The CPU opponent, in one place: the login it plays under, how long it "thinks", how often its turn is looked
-    /// for, and whether its matches pay the human. The tunables live here the way the timeouts live in
-    /// <see cref="MatchTimeouts"/> and the reward table lives in <see cref="MatchRewardService"/>.
+    /// How the machine plays: how long it "thinks", how often its turn is looked for, and how strong a hand it draws.
+    /// The tunables live here the way the timeouts live in <see cref="MatchTimeouts"/> and the reward table lives in
+    /// <see cref="MatchRewardService"/>.
     ///
-    /// The login is an **identity, not a display name**: it is what <c>PlayerHand.PlayerId</c>,
-    /// <c>CardPlacement.PlayerId</c>/<c>Owner</c>, <c>Match.CurrentPlayerTurn</c> and <c>Match.WinnerId</c> hold, which
-    /// is why a match against the CPU needs no schema of its own. The name a human reads is the client's business
-    /// (see plans/PLAN-012-cpu-opponent/plan.md §11 for the "looks like a person" work).
+    /// A bot is an ordinary <c>Players</c> row now (plans/PLAN-025-bots/plan.md), so this class no longer carries a
+    /// login sentinel: a move's actor is the match's own current player, and the sweep finds the matches to play by
+    /// asking which logins are bots. What is left here is only the machine's *behaviour*.
     /// </summary>
-    public static class CpuOpponent
+    public static class BotOpponent
     {
-        /// <summary>The sentinel the create endpoint seats as player 2, and the actor of every move it plays.</summary>
-        public const string Login = "AI";
-
         /// <summary>
         /// How often its turn is looked for. Its effect is gated by the think window below, so a slower poll only
-        /// makes the CPU answer a little later rather than changing how the delay is measured.
+        /// makes the bot answer a little later rather than changing how the delay is measured.
         /// </summary>
         public static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(1);
 
-        /// <summary>The shortest the CPU waits before answering — long enough to read as somebody thinking.</summary>
+        /// <summary>The shortest the bot waits before answering — long enough to read as somebody thinking.</summary>
         public static readonly TimeSpan MinThink = TimeSpan.FromMilliseconds(1200);
 
         /// <summary>The longest it waits — see <see cref="MinThink"/>.</summary>
         public static readonly TimeSpan MaxThink = TimeSpan.FromMilliseconds(3200);
 
         /// <summary>
-        /// A flat pause on top of the window above, so every CPU move reads as somebody thinking rather than as the
+        /// A flat pause on top of the window above, so every bot move reads as somebody thinking rather than as the
         /// server answering (agreed 2026-09-27: the requester found its moves "happening too fast"). The window above
         /// still varies move to move; this only shifts the whole band, and it is added inside
         /// <see cref="ThinkTime"/> so <c>MoveDueAt</c> stays derived from the row — a restart or a redeploy mid-think
@@ -39,18 +35,11 @@ namespace TripleTriadApi.Services
         public static readonly TimeSpan ThinkingPause = TimeSpan.FromSeconds(5);
 
         /// <summary>
-        /// Whether a match against the CPU pays the human like a real one (coins, XP and the W/L/T counter). Flip it
-        /// to false and <see cref="MatchRewardService"/> returns nothing at all for a CPU match; the CPU's own half is
-        /// skipped either way. One switch, because the economy is the requester's call — kept paying for now.
-        /// </summary>
-        public static readonly bool RewardsForCpuMatches = true;
-
-        /// <summary>
-        /// The weight of one card level in the CPU's opening hand: <c>level²</c> rather than the flat draw a
+        /// The weight of one card level in a bot's opening hand: <c>level²</c> rather than the flat draw a
         /// human gets, so the opponent turns up with something like the deck a strong player brings. A slot of
         /// its hand lands on level 10 25.97% of the time and on level 1 0.26% of the time, which leaves the five
         /// cards at level 7.9 on average with three of them level 8 or better. The draw itself is
-        /// <see cref="GameLogicService.GetCpuHand"/>.
+        /// <see cref="GameLogicService.GetBotHand"/>.
         /// </summary>
         public static int HandLevelWeight(int level) => level * level;
 
@@ -60,10 +49,6 @@ namespace TripleTriadApi.Services
         /// </summary>
         public static int TotalHandLevelWeight =>
             Enumerable.Range(Card.MinLevel, Card.MaxLevel - Card.MinLevel + 1).Sum(HandLevelWeight);
-
-        /// <summary>True when this match is waiting on the CPU to move.</summary>
-        public static bool IsCpuTurn(Match match) =>
-            match.Status == "active" && match.CurrentPlayerTurn == Login;
 
         /// <summary>
         /// How long this particular move takes, derived from the match and how many cards are already on the board.
@@ -84,9 +69,9 @@ namespace TripleTriadApi.Services
         }
 
         /// <summary>
-        /// When this match's CPU move is due: the newest placement plus that move's thinking time, or the activation
+        /// When this match's bot move is due: the newest placement plus that move's thinking time, or the activation
         /// stamp while the board is still empty. Null when there is nothing to measure from — a match with neither a
-        /// placement nor an activation — which is the one case the CPU leaves alone.
+        /// placement nor an activation — which is the one case the bot leaves alone.
         /// </summary>
         public static DateTime? MoveDueAt(Match match, IReadOnlyCollection<CardPlacement> placements)
         {
@@ -98,7 +83,7 @@ namespace TripleTriadApi.Services
             return reference is null ? null : reference + ThinkTime(match.Id, placements.Count);
         }
 
-        /// <summary>True once the CPU is allowed to play.</summary>
+        /// <summary>True once the bot is allowed to play.</summary>
         public static bool IsMoveDue(Match match, IReadOnlyCollection<CardPlacement> placements, DateTime now) =>
             MoveDueAt(match, placements) is { } due && due <= now;
     }

@@ -25,6 +25,7 @@ namespace TripleTriadApi.Controllers
         private readonly TokenService _tokenService;
         private readonly PasswordResetService _passwordResetService;
         private readonly FriendService _friendService;
+        private readonly IPlayerPresence _presence;
 
         public PlayerController(
             IPlayerRepository playerRepository,
@@ -36,7 +37,8 @@ namespace TripleTriadApi.Controllers
             ResetPasswordRequestValidator resetPasswordValidator,
             TokenService tokenService,
             PasswordResetService passwordResetService,
-            FriendService friendService
+            FriendService friendService,
+            IPlayerPresence presence
         )
         {
             _playerRepository = playerRepository;
@@ -49,6 +51,7 @@ namespace TripleTriadApi.Controllers
             _tokenService = tokenService;
             _passwordResetService = passwordResetService;
             _friendService = friendService;
+            _presence = presence;
         }
 
         [HttpPost("register")]
@@ -351,9 +354,8 @@ namespace TripleTriadApi.Controllers
         /// coin balance and the pack count, none of which belong on a stranger's screen (see
         /// <see cref="ToPublicProfileAsync"/>).
         ///
-        /// The CPU plays under the sentinel login and has no <c>Players</c> row at all, so it answers 404 here like
-        /// any unknown login. That is the server-side half of "the CPU's name is never a link" — the client never
-        /// asks (see <c>plans/PLAN-020-opponent-profile/plan.md</c> §3.3).
+        /// A bot is an ordinary row, so its profile answers here like anyone's (plans/PLAN-025-bots/plan.md §3.6) —
+        /// its record and level, with the collection withheld as "??". Only a genuinely unknown login 404s.
         /// </summary>
         [Authorize]
         [HttpGet("profile/{login}")]
@@ -450,11 +452,18 @@ namespace TripleTriadApi.Controllers
             {
                 login = player.Login,
                 avatarUrl = player.AvatarUrl,
+                isBot = player.IsBot,
+                // A bot has a record and a level, but its collection is not shown yet — the figure is withheld rather
+                // than counted, and the client renders "??" (plans/PLAN-025-bots/plan.md §3.9).
+                cardsOwned = player.IsBot
+                    ? (int?)null
+                    : await _playerCardRepository.GetOwnedCardCountAsync(player.Login),
                 experience = player.Experience,
                 wins = player.Wins,
                 losses = player.Losses,
                 ties = player.Ties,
-                cardsOwned = await _playerCardRepository.GetOwnedCardCountAsync(player.Login),
+                // A live flag for a bot too, so its profile carries the same online dot a human's would.
+                online = _presence.IsOnline(player.Login),
                 friendship = await _friendService.StateAsync(requester, player.Login),
             };
 

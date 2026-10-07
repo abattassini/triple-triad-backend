@@ -3,16 +3,16 @@ using TripleTriadApi.Models;
 namespace TripleTriadApi.Services
 {
     /// <summary>
-    /// How the CPU picks its move: every card it still holds against every empty cell, scored by what that move would
+    /// How the bot picks its move: every card it still holds against every empty cell, scored by what that move would
     /// actually do. The candidates come from <see cref="GameLogicService.EnumerateMoves"/> — the same enumeration a
     /// client's preview is built from, each resolved through <see cref="GameLogicService.PlayCard"/> and the real rules
     /// — so a SAME or PLUS flip counts as a capture here exactly as it would in play, and a change to the rules can
-    /// never leave the CPU evaluating a board that no longer behaves the way it assumes.
+    /// never leave the bot evaluating a board that no longer behaves the way it assumes.
     ///
     /// It is a deliberately one-ply player (plans/PLAN-012-cpu-opponent/plan.md §5.2): it takes what it can see, keeps its
     /// strong cards where they are hardest to attack, and this class is the only place to make it smarter.
     /// </summary>
-    public class CpuMoveSelector(GameLogicService gameLogic)
+    public class BotMoveSelector(GameLogicService gameLogic)
     {
         private readonly GameLogicService _gameLogic = gameLogic;
 
@@ -20,7 +20,7 @@ namespace TripleTriadApi.Services
         public sealed record Move(int CardId, int X, int Y, int Captures);
 
         /// <summary>
-        /// The move to play, or null when the CPU has nothing to play with. Captures decide first; between equally
+        /// The move to play, or null when the bot has nothing to play with. Captures decide first; between equally
         /// capturing moves it keeps the strongest card in the least exposed cell (a corner is attacked from two sides,
         /// the centre from four), and ties are settled with the injected randomness so two matches never play out the
         /// same way.
@@ -29,6 +29,7 @@ namespace TripleTriadApi.Services
             Match match,
             IReadOnlyCollection<CardPlacement> board,
             IReadOnlyCollection<PlayerHand> hand,
+            string actor,
             IRandomSource random
         )
         {
@@ -37,7 +38,7 @@ namespace TripleTriadApi.Services
             // with the move that is really played — must never be what a candidate is resolved on, and two candidates
             // must not score against each other's captures either.
             var scored = _gameLogic
-                .EnumerateMoves(match, board, hand, CpuOpponent.Login)
+                .EnumerateMoves(match, board, hand, actor)
                 .Select(outcome =>
                 {
                     var captures = outcome.Result.CapturedCards.Count;

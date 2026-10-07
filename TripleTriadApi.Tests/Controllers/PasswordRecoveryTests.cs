@@ -177,7 +177,8 @@ namespace TripleTriadApi.Tests.Controllers
                 new ResetPasswordRequestValidator(),
                 new TokenService(),
                 PasswordRecoveryTestHarness.CreateService(context, mail),
-                FriendshipTestHarness.CreateFriendService(context)
+                FriendshipTestHarness.CreateFriendService(context),
+                new ConnectionPresence()
             )
             {
                 ControllerContext = new ControllerContext

@@ -38,14 +38,14 @@ namespace TripleTriadApi.Tests.Services
             await SeedAsync(context);
             var match = await AddMatchAsync(context, status: "active", currentPlayerTurn: Human);
             await AddHandAsync(context, match.Id, Human, [EvenCard, SecondEvenCard]);
-            await AddPlacementAsync(context, match.Id, EvenCard, CpuOpponent.Login, x: 0, y: 1);
+            await AddPlacementAsync(context, match.Id, EvenCard, TestBots.Login, x: 0, y: 1);
 
             var preview = await CreateService(context).PreviewAsync(match.Id, Human);
 
             var answered = Assert.IsType<MovePreviewService.Preview>(preview);
             Assert.Equal(Human, answered.PlayerId);
             Assert.Equal(1, answered.Placements);
-            Assert.Equal(CpuOpponent.Login, answered.NextPlayer);
+            Assert.Equal(TestBots.Login, answered.NextPlayer);
 
             // Two cards against the eight cells that are left.
             Assert.Equal(16, answered.Moves.Count);
@@ -60,8 +60,8 @@ namespace TripleTriadApi.Tests.Services
             var match = await AddMatchAsync(context, status: "active", currentPlayerTurn: Human);
             await AddHandAsync(context, match.Id, Human, [EvenCard]);
 
-            // The list would be built from argel's hand, so the CPU may not be handed it.
-            Assert.Null(await CreateService(context).PreviewAsync(match.Id, CpuOpponent.Login));
+            // The list would be built from argel's hand, so the bot may not be handed it.
+            Assert.Null(await CreateService(context).PreviewAsync(match.Id, TestBots.Login));
         }
 
         [Fact]
@@ -119,7 +119,7 @@ namespace TripleTriadApi.Tests.Services
             using var context = CreateContext();
             await SeedAsync(context);
 
-            // SAME is in play, and the CPU's two rank-5 cards sit where a rank-5 card played in the centre ties with
+            // SAME is in play, and the bot's two rank-5 cards sit where a rank-5 card played in the centre ties with
             // both of them: the preview has to offer a move that is a rule capture, not merely a battle.
             var match = await AddMatchAsync(
                 context,
@@ -128,8 +128,8 @@ namespace TripleTriadApi.Tests.Services
                 rules: [MatchRule.Same, MatchRule.Plus]
             );
             await AddHandAsync(context, match.Id, Human, [EvenCard, SecondEvenCard]);
-            await AddPlacementAsync(context, match.Id, EvenCard, CpuOpponent.Login, x: 0, y: 1);
-            await AddPlacementAsync(context, match.Id, SecondEvenCard, CpuOpponent.Login, x: 1, y: 0);
+            await AddPlacementAsync(context, match.Id, EvenCard, TestBots.Login, x: 0, y: 1);
+            await AddPlacementAsync(context, match.Id, SecondEvenCard, TestBots.Login, x: 1, y: 0);
 
             var gameLogic = new GameLogicService();
             var preview = await CreateService(context).PreviewAsync(match.Id, Human);
@@ -177,7 +177,7 @@ namespace TripleTriadApi.Tests.Services
             await SeedAsync(context);
             var match = await AddMatchAsync(context, status: "active", currentPlayerTurn: Human);
             await AddHandAsync(context, match.Id, Human, [StrongCardId]);
-            await AddPlacementAsync(context, match.Id, EvenCard, CpuOpponent.Login, x: 1, y: 1);
+            await AddPlacementAsync(context, match.Id, EvenCard, TestBots.Login, x: 1, y: 1);
 
             var preview = Assert.IsType<MovePreviewService.Preview>(
                 await CreateService(context).PreviewAsync(match.Id, Human)
@@ -189,38 +189,44 @@ namespace TripleTriadApi.Tests.Services
                 .CardPlacements.Where(placement => placement.MatchId == match.Id)
                 .ToListAsync();
 
-            Assert.All(stored, placement => Assert.Equal(CpuOpponent.Login, placement.Owner));
+            Assert.All(stored, placement => Assert.Equal(TestBots.Login, placement.Owner));
             Assert.False(context.ChangeTracker.HasChanges());
         }
 
         [Fact]
-        public async Task EnumerateMoves_IsTheListTheCpuPicksFrom()
+        public async Task EnumerateMoves_IsTheListTheBotPicksFrom()
         {
-            // The refactor guard: the CPU's choice is one of the moves the preview offers. Both callers share
-            // `EnumerateMoves`, so a CPU move outside the enumeration would mean the two had drifted apart.
+            // The refactor guard: the bot's choice is one of the moves the preview offers. Both callers share
+            // `EnumerateMoves`, so a bot move outside the enumeration would mean the two had drifted apart.
             using var context = CreateContext();
             await SeedAsync(context);
             var match = await AddMatchAsync(
                 context,
                 status: "active",
-                currentPlayerTurn: CpuOpponent.Login
+                currentPlayerTurn: TestBots.Login
             );
-            await AddHandAsync(context, match.Id, CpuOpponent.Login, [EvenCard, SecondEvenCard]);
+            await AddHandAsync(context, match.Id, TestBots.Login, [EvenCard, SecondEvenCard]);
             await AddPlacementAsync(context, match.Id, EvenCard, Human, x: 1, y: 1);
 
             var preview = Assert.IsType<MovePreviewService.Preview>(
-                await CreateService(context).PreviewAsync(match.Id, CpuOpponent.Login)
+                await CreateService(context).PreviewAsync(match.Id, TestBots.Login)
             );
 
             var board = await context
                 .CardPlacements.Where(placement => placement.MatchId == match.Id)
                 .ToListAsync();
             var hand = await context
-                .PlayerHands.Where(row => row.MatchId == match.Id && row.PlayerId == CpuOpponent.Login)
+                .PlayerHands.Where(row => row.MatchId == match.Id && row.PlayerId == TestBots.Login)
                 .ToListAsync();
 
-            var chosen = Assert.IsType<CpuMoveSelector.Move>(
-                new CpuMoveSelector(new GameLogicService()).Select(match, board, hand, new ScriptedRandom())
+            var chosen = Assert.IsType<BotMoveSelector.Move>(
+                new BotMoveSelector(new GameLogicService()).Select(
+                    match,
+                    board,
+                    hand,
+                    TestBots.Login,
+                    new ScriptedRandom()
+                )
             );
 
             Assert.Contains(
@@ -242,7 +248,7 @@ namespace TripleTriadApi.Tests.Services
                 match,
                 [],
                 [new PlayerHand { PlayerId = Human, CardId = EvenCard, Card = Card(EvenCard) }],
-                CpuOpponent.Login
+                TestBots.Login
             );
 
             Assert.Empty(moves);
@@ -365,14 +371,14 @@ namespace TripleTriadApi.Tests.Services
         private static async Task<Match> AddMatchAsync(
             TripleTriadContext context,
             string status,
-            string? currentPlayerTurn = CpuOpponent.Login,
+            string? currentPlayerTurn = TestBots.Login,
             List<MatchRule>? rules = null
         )
         {
             var match = new Match
             {
                 Player1Id = Human,
-                Player2Id = CpuOpponent.Login,
+                Player2Id = TestBots.Login,
                 CurrentPlayerTurn = currentPlayerTurn,
                 Status = status,
                 CreatedAt = DateTime.UtcNow,
@@ -436,7 +442,7 @@ namespace TripleTriadApi.Tests.Services
             await context.SaveChangesAsync();
         }
 
-        /// <summary>One scripted answer, so the CPU's tie-break is an exact expectation instead of a range.</summary>
+        /// <summary>One scripted answer, so the bot's tie-break is an exact expectation instead of a range.</summary>
         private sealed class ScriptedRandom : IRandomSource
         {
             public int Next(int exclusiveMax) => 0;

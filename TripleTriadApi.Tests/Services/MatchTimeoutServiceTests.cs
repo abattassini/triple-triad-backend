@@ -567,7 +567,7 @@ namespace TripleTriadApi.Tests.Services
             /// <summary>Matches settled early (a forfeit), with the push reason.</summary>
             public List<(int MatchId, string Reason)> Completed { get; } = [];
 
-            /// <summary>Moves the server played on a client's behalf (the CPU): not this sweep's business, recorded anyway.</summary>
+            /// <summary>Moves the server played on a client's behalf (the bot): not this sweep's business, recorded anyway.</summary>
             public List<MovePush> Moves { get; } = [];
 
             public Task HandReadyAsync(int matchId) => Task.CompletedTask;

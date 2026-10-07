@@ -93,11 +93,16 @@ namespace TripleTriadApi.Repositories
 
         /// <summary>
         /// The active matches in which <paramref name="playerId"/> is the opponent (player 2) and it is their turn —
-        /// what the CPU's move engine works from, since the sentinel only ever plays that seat. The board and both
+        /// what the bot's move engine works from, since the sentinel only ever plays that seat. The board and both
         /// hands come with their **cards**, because a move has to be evaluated against the real values (the timeout
         /// sweep's query loads neither: it only looks at counts and timestamps).
         /// </summary>
-        Task<List<Match>> GetMatchesAwaitingTurnAsync(string playerId);
+        /// <summary>
+        /// Active matches whose turn belongs to one of <paramref name="botLogins"/> — what the bot sweep plays
+        /// (plans/PLAN-025-bots/plan.md §3.4). It takes the logins rather than a single sentinel because a bot is an
+        /// ordinary player row now, so "whose turn it is" is simply "is it a bot's".
+        /// </summary>
+        Task<List<Match>> GetMatchesAwaitingBotTurnAsync(IReadOnlyCollection<string> botLogins);
 
         /// <summary>
         /// Takes a turn in one guarded statement: <paramref name="actor"/>'s turn only flips to
@@ -127,7 +132,7 @@ namespace TripleTriadApi.Repositories
 
         /// <summary>
         /// Stamps <c>ActivatedAt</c> on an <c>active</c> match that does not have it yet — the moment both hands are
-        /// filed and the board opens, which is the reference the CPU's opening move is timed from (PLAN-024).
+        /// filed and the board opens, which is the reference the bot's opening move is timed from (PLAN-024).
         /// Deliberately narrow: it only ever writes that one column, and only where the stamp is still missing, so the
         /// PvP paths (which stamp at join/claim) are untouched and a hand a caller just replaced is never disturbed.
         /// Returns true when it stamped.
@@ -195,9 +200,10 @@ namespace TripleTriadApi.Repositories
                 // The opener, drawn at random by the caller once both seats are known (PLAN-024). A waiting match has
                 // only its creator to go on, so it carries them as a placeholder until the claim draws for real.
                 CurrentPlayerTurn = startingPlayer,
-                Status = string.IsNullOrEmpty(player2Id)
-                    ? "waiting"
-                    : (player2Id == "AI" ? "active" : "active"),
+                // A match with a second seat is active at once (a bot seated by the fallback, or a named opponent); a
+                // match whose second seat is empty waits to be found. (The old `"AI"` ternary had two identical
+                // branches; with the sentinel gone the choice is simply whether the seat is filled.)
+                Status = string.IsNullOrEmpty(player2Id) ? "waiting" : "active",
                 Player1Score = 5, // Both players start with 5 points (their 5 cards)
                 Player2Score = 5,
                 Rules = rules, // Rules the creator enabled for this match
@@ -428,18 +434,23 @@ namespace TripleTriadApi.Repositories
             return true;
         }
 
-        public async Task<List<Match>> GetMatchesAwaitingTurnAsync(string playerId)
+        public async Task<List<Match>> GetMatchesAwaitingBotTurnAsync(
+            IReadOnlyCollection<string> botLogins
+        )
         {
+            if (botLogins.Count == 0)
+            {
+                return [];
+            }
+
+            var logins = botLogins.ToList();
+
             return await _context
                 .Matches.Include(m => m.CardPlacements)
                 .ThenInclude(placement => placement.Card)
                 .Include(m => m.PlayerHands)
                 .ThenInclude(hand => hand.Card)
-                .Where(m =>
-                    m.Status == "active"
-                    && m.Player2Id == playerId
-                    && m.CurrentPlayerTurn == playerId
-                )
+                .Where(m => m.Status == "active" && logins.Contains(m.CurrentPlayerTurn))
                 .ToListAsync();
         }
 

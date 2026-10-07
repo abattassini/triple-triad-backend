@@ -30,5 +30,22 @@ namespace TripleTriadApi.Models
 
         // Null until an avatar is chosen; the frontend shows a placeholder.
         public string? AvatarUrl { get; set; }
+
+        /// <summary>
+        /// True for a bot: an emulated player the backend plays on behalf of
+        /// (plans/PLAN-025-bots/plan.md). A bot is an ordinary <see cref="Player"/> row — it has a profile, a record
+        /// and a live online flag, and every screen that draws a player draws a bot too — but no desktop is behind it,
+        /// so it never signs in and its moves are played by the turn engine. False for every human, which is also the
+        /// column default, so an existing row can never be mistaken for a bot.
+        /// </summary>
+        public bool IsBot { get; set; }
+
+        /// <summary>
+        /// How active a bot is, 0–100: the share of the time it is online (plans/PLAN-025-bots/plan.md §3.2). The
+        /// presence rule reads it and nothing else does; it is meaningless (0) for a human. Seeded low for now — no
+        /// bot idles online all day — but the column itself allows the whole range, so the ceiling can be raised later
+        /// without a migration.
+        /// </summary>
+        public int Activity { get; set; }
     }
 }

@@ -87,10 +87,10 @@ builder.Services.AddScoped<IMatchNotifier, SignalRMatchNotifier>();
 // Settles matches whose deadlines passed: a waiting match nobody joined, a hand that never arrived, a stalled game.
 builder.Services.AddHostedService<MatchTimeoutService>();
 
-// The CPU opponent: its moves are chosen by CpuMoveSelector and played by a sweep through the shared play pipeline,
+// The bot opponent: its moves are chosen by BotMoveSelector and played by a sweep through the shared play pipeline,
 // so a match against it is an ordinary match with a server-side mover on player 2.
-builder.Services.AddScoped<CpuMoveSelector>();
-builder.Services.AddHostedService<CpuTurnService>();
+builder.Services.AddScoped<BotMoveSelector>();
+builder.Services.AddHostedService<BotTurnService>();
 
 // Card shop: the pack draw needs randomness behind a seam (tests script it), so it is a singleton.
 builder.Services.AddSingleton<IRandomSource, SystemRandomSource>();
@@ -114,7 +114,14 @@ builder.Services.AddScoped<FriendService>();
 // Presence (see plans/PLAN-023-social-friends-list/plan.md §3.1): the registry is a **singleton**, because the state it
 // holds is this process's own sockets and would be meaningless per-request; the service that announces changes is
 // scoped, like every other service that reaches the database.
-builder.Services.AddSingleton<IPlayerPresence, ConnectionPresence>();
+//
+// The interface is the bot-aware decorator (plans/PLAN-025-bots/plan.md §3.2), so every caller that asks "is this
+// login online?" — the friend list, a profile — also learns a bot's emulated state. The connections registry stays
+// concrete because both the hub (a real socket arriving) and the decorator (a human's answer) need its Add/Remove.
+builder.Services.AddSingleton<ConnectionPresence>();
+builder.Services.AddSingleton<BotRegistry>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<IPlayerPresence, BotAwarePresence>();
 builder.Services.AddScoped<PresenceService>();
 
 // Recovery configuration, bound through the options system rather than read from environment variables directly.
@@ -423,6 +430,22 @@ using (var scope = app.Services.CreateScope())
     }
 
     await CardSeederService.SeedCardsAsync(context);
+
+    // The bots: the cohort of emulated players a match can always fall back to (plans/PLAN-025-bots/plan.md). Seeded
+    // beside the cards and for the same reason — it is what makes the game playable on a fresh database.
+    await BotSeederService.SeedBotsAsync(
+        context,
+        scope.ServiceProvider.GetRequiredService<IRandomSource>()
+    );
+
+    // Hand the cohort to the presence cache, so a bot's emulated online state can be answered without a read
+    // (plans/PLAN-025-bots/plan.md §3.2). Loaded here, after the seeder, since nothing else creates a bot.
+    var botRegistry = scope.ServiceProvider.GetRequiredService<BotRegistry>();
+    var botRows = await context
+        .Players.Where(player => player.IsBot)
+        .Select(player => new { player.Login, player.Activity })
+        .ToListAsync();
+    botRegistry.Load(botRows.Select(row => new BotRegistry.Bot(row.Login, row.Activity)));
 }
 
 // Log startup information

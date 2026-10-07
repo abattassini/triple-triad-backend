@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
@@ -195,72 +196,72 @@ namespace TripleTriadApi.Tests.Controllers
             var waiting = await controller.CreateMatch(
                 new CreateMatchRequest { CardIds = FirstHand, PickHandLater = true }
             );
-            var againstTheCpu = await controller.CreateMatch(
+            var againstTheBot = await controller.CreateMatch(
                 new CreateMatchRequest
                 {
-                    OpponentId = CpuOpponent.Login,
+                    OpponentId = TestBots.Login,
                     CardIds = FirstHand,
                     PickHandLater = true,
                 }
             );
 
             AssertContradictoryPickHandLater(waiting);
-            AssertContradictoryPickHandLater(againstTheCpu);
+            AssertContradictoryPickHandLater(againstTheBot);
             Assert.Empty(context.Matches);
         }
 
         [Fact]
-        public async Task CreateMatch_AgainstTheCpuWithPickHandLater_FilesOnlyTheCpuHand()
+        public async Task QuickBotMatch_SeatsAnOnlineBot_AndActivatesOnlyOnceTheHumanPicks()
         {
             using var context = CreateContext();
             await SeedAsync(context);
-            var controller = CreateController(context, PlayerLogin);
+            // The opening turn is drawn at random (PLAN-024); a fixed coin is enough for this test.
+            var controller = CreateController(context, PlayerLogin, random: new FixedRandom(1));
 
-            // The SelectHand flow against the CPU: it is seated as player 2 with a hand of its own, and the human's
-            // five arrive through POST match/{id}/hand like any other pick.
-            var result = await controller.CreateMatch(
-                new CreateMatchRequest { OpponentId = CpuOpponent.Login, PickHandLater = true }
-            );
+            var result = await controller.QuickBotMatch(new QuickMatchRequest());
 
             var ok = Assert.IsType<OkObjectResult>(result.Result);
             using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
             var root = json.RootElement;
             var matchId = root.GetProperty("match").GetProperty("Id").GetInt32();
 
+            // The opponent is a real bot row, seated as player 2, and only the bot has a hand so far.
             Assert.Equal("active", root.GetProperty("match").GetProperty("Status").GetString());
-            Assert.Equal(
-                CpuOpponent.Login,
-                root.GetProperty("match").GetProperty("Player2Id").GetString()
-            );
+            Assert.Equal(TestBots.Login, root.GetProperty("match").GetProperty("Player2Id").GetString());
             Assert.Equal(0, root.GetProperty("playerHand").GetArrayLength());
-
             Assert.Equal(
                 GameLogicService.HandSize,
-                await context.PlayerHands.CountAsync(hand => hand.PlayerId == CpuOpponent.Login)
+                await context.PlayerHands.CountAsync(hand => hand.PlayerId == TestBots.Login)
             );
             Assert.Equal(
                 0,
                 await context.PlayerHands.CountAsync(hand => hand.PlayerId == PlayerLogin)
             );
 
-            // Nobody is ready until the human picks — and the pick is what makes the match ready.
+            // Nobody is ready until the human picks, so the match is not activated — which is what keeps a bot that
+            // drew the opening turn from moving over the SelectHand screen.
             Assert.False((await ReadStateAsync(controller, matchId)).HandsReady);
+            Assert.Null((await context.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId)).ActivatedAt);
 
             await controller.SetHand(matchId, new SetHandRequest { CardIds = FirstHand });
 
+            // The pick opens the board and stamps the activation the bot's opening move is timed from.
             Assert.True((await ReadStateAsync(controller, matchId)).HandsReady);
+            Assert.NotNull(
+                (await context.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId)).ActivatedAt
+            );
         }
 
         [Fact]
-        public async Task CreateMatch_AgainstTheCpuWithACardList_FilesThatHand()
+        public async Task CreateMatch_AgainstTheBotWithACardList_FilesThatHand()
         {
             using var context = CreateContext();
             await SeedAsync(context);
             var controller = CreateController(context, PlayerLogin);
 
-            // The older client's shape: the list files the human's hand straight away, and the CPU still gets its own.
+            // The older client's shape: the list files the human's hand straight away, and the bot still gets its own.
             var result = await controller.CreateMatch(
-                new CreateMatchRequest { OpponentId = CpuOpponent.Login, CardIds = FirstHand }
+                new CreateMatchRequest { OpponentId = TestBots.Login, CardIds = FirstHand }
             );
 
             var ok = Assert.IsType<OkObjectResult>(result.Result);
@@ -271,7 +272,7 @@ namespace TripleTriadApi.Tests.Controllers
             Assert.Equal(FirstHand.Length, root.GetProperty("playerHand").GetArrayLength());
             Assert.Equal(
                 GameLogicService.HandSize,
-                await context.PlayerHands.CountAsync(hand => hand.PlayerId == CpuOpponent.Login)
+                await context.PlayerHands.CountAsync(hand => hand.PlayerId == TestBots.Login)
             );
             Assert.Equal(
                 FirstHand.Length,
@@ -280,20 +281,20 @@ namespace TripleTriadApi.Tests.Controllers
         }
 
         [Fact]
-        public async Task CreateMatch_AgainstTheCpu_DrawsItsHandFromTheStrongestLevels()
+        public async Task CreateMatch_AgainstTheBot_DrawsItsHandFromTheStrongestLevels()
         {
             using var context = CreateContext();
             await SeedAsync(context);
-            // The rng takes the top of the range on every draw, so the CPU's five are the strongest cards the
+            // The rng takes the top of the range on every draw, so the bot's five are the strongest cards the
             // catalogue has: level 10 down to level 6, one per level. A uniform draw could not produce that, so
             // this is what pins the AI path to the level-weighted draw instead of GetRandomHand.
             var controller = CreateController(context, PlayerLogin, random: new TopOfRangeRandom());
 
-            await controller.CreateMatch(new CreateMatchRequest { OpponentId = CpuOpponent.Login });
+            await controller.CreateMatch(new CreateMatchRequest { OpponentId = TestBots.Login });
 
             var cpuHand = await context
                 .PlayerHands.Include(hand => hand.Card)
-                .Where(hand => hand.PlayerId == CpuOpponent.Login)
+                .Where(hand => hand.PlayerId == TestBots.Login)
                 .ToListAsync();
 
             Assert.Equal(
@@ -303,7 +304,7 @@ namespace TripleTriadApi.Tests.Controllers
         }
 
         [Fact]
-        public async Task CreateMatch_AgainstTheCpu_TheOpeningTurnIsDrawn()
+        public async Task CreateMatch_AgainstTheBot_TheOpeningTurnIsDrawn()
         {
             using var humanContext = CreateContext();
             await SeedAsync(humanContext);
@@ -313,7 +314,7 @@ namespace TripleTriadApi.Tests.Controllers
                 PlayerLogin,
                 random: new FixedRandom(0)
             );
-            await humanOpens.CreateMatch(new CreateMatchRequest { OpponentId = CpuOpponent.Login });
+            await humanOpens.CreateMatch(new CreateMatchRequest { OpponentId = TestBots.Login });
 
             Assert.Equal(
                 PlayerLogin,
@@ -322,43 +323,48 @@ namespace TripleTriadApi.Tests.Controllers
 
             using var cpuContext = CreateContext();
             await SeedAsync(cpuContext);
-            // The coin names the CPU, so the CPU opens — no longer always the human who created the match.
+            // The coin names the bot, so the bot opens — no longer always the human who created the match.
             var cpuOpens = CreateController(cpuContext, PlayerLogin, random: new FixedRandom(1));
-            await cpuOpens.CreateMatch(new CreateMatchRequest { OpponentId = CpuOpponent.Login });
+            await cpuOpens.CreateMatch(new CreateMatchRequest { OpponentId = TestBots.Login });
 
             Assert.Equal(
-                CpuOpponent.Login,
+                TestBots.Login,
                 (await cpuContext.Matches.AsNoTracking().SingleAsync()).CurrentPlayerTurn
             );
         }
 
         [Fact]
-        public async Task CreateMatch_AgainstTheCpu_ActivatesOnlyOnceBothHandsAreIn()
+        public void QuickBotMatch_IsRoutedWhereTheClientCallsIt()
+        {
+            // The bug this guards: the endpoint was mounted at `api/game/quick-bot` while the client POSTs to
+            // `api/game/match/quick-bot`, so the bot fallback silently 404'd and read as "Failed to find an opponent".
+            // The other tests call the controller method directly and bypass routing, so this reflects the attribute.
+            var method = typeof(GameController).GetMethod(nameof(GameController.QuickBotMatch))!;
+            var post = method.GetCustomAttribute<HttpPostAttribute>()!;
+
+            Assert.Equal("match/quick-bot", post.Template);
+            Assert.Equal(
+                "api/[controller]",
+                typeof(GameController).GetCustomAttribute<RouteAttribute>()!.Template
+            );
+        }
+
+        [Fact]
+        public async Task CreateMatch_WithPickHandLaterAndANamedOpponent_Returns400()
         {
             using var context = CreateContext();
             await SeedAsync(context);
-            // The CPU is drawn to open; it must still wait for the human's hand.
-            var controller = CreateController(context, PlayerLogin, random: new FixedRandom(1));
+            var controller = CreateController(context, PlayerLogin);
 
+            // The manual "seat an opponent now" path no longer accepts a hand-less side: bots are seated by the
+            // matchmaking fallback (quick-bot), not here (PLAN-025), and a human opponent must bring a hand.
             var result = await controller.CreateMatch(
-                new CreateMatchRequest { OpponentId = CpuOpponent.Login, PickHandLater = true }
-            );
-            var ok = Assert.IsType<OkObjectResult>(result.Result);
-            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
-            var matchId = json.RootElement.GetProperty("match").GetProperty("Id").GetInt32();
-
-            // The CPU's hand is filed at creation and the human's is not, so the match is not activated yet — which
-            // is exactly what keeps the CPU from opening over the SelectHand screen.
-            Assert.Null(
-                (await context.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId)).ActivatedAt
+                new CreateMatchRequest { OpponentId = TestBots.Login, PickHandLater = true }
             );
 
-            // Filing the human's hand opens the board and stamps the activation the CPU's opening is timed from.
-            await controller.SetHand(matchId, new SetHandRequest { CardIds = FirstHand });
-
-            Assert.NotNull(
-                (await context.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId)).ActivatedAt
-            );
+            var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(badRequest.Value));
+            Assert.Contains("PickHandLater", json.RootElement.GetProperty("error").GetString());
         }
 
         [Fact]
@@ -369,7 +375,7 @@ namespace TripleTriadApi.Tests.Controllers
             var controller = CreateController(context, PlayerLogin);
 
             // A named human opponent has no picker of their own, so a hand-less match with them would leave a player
-            // stuck: the flag is for a waiting match and for the CPU only.
+            // stuck: the flag is for a waiting match and for the bot only.
             var result = await controller.CreateMatch(
                 new CreateMatchRequest { OpponentId = OpponentLogin, PickHandLater = true }
             );
@@ -813,12 +819,12 @@ namespace TripleTriadApi.Tests.Controllers
             Assert.Contains("started another match", abandoned.Reason);
 
             // And the player can search again as often as they like: what the next call gives up is the match the
-            // previous one created, never a 400.
+            // previous one created, never a 400. That one is still waiting, so — having no opponent — it tells nobody.
             notifier.Abandoned.Clear();
             await controller.CreateMatch(new CreateMatchRequest { PickHandLater = true });
 
             Assert.Equal("abandoned", await StatusAsync(context, newMatchId));
-            Assert.Equal(newMatchId, Assert.Single(notifier.Abandoned).MatchId);
+            Assert.Empty(notifier.Abandoned);
         }
 
         [Fact]
@@ -840,9 +846,10 @@ namespace TripleTriadApi.Tests.Controllers
             await controller.CreateMatch(new CreateMatchRequest { PickHandLater = true });
 
             // Our own waiting match goes too: it is a match the player cannot play any more, and leaving it in the
-            // queue would hand a ghost to whoever joined it.
+            // queue would hand a ghost to whoever joined it. It has no opponent, so nobody is told — only a match
+            // with a second seat gets a `MatchAbandoned`.
             Assert.Equal("abandoned", await StatusAsync(context, ownWaiting.Id));
-            Assert.Equal(ownWaiting.Id, Assert.Single(notifier.Abandoned).MatchId);
+            Assert.Empty(notifier.Abandoned);
 
             // A match that is over, and a match the player is not in, are none of this search's business.
             Assert.Equal("completed", await StatusAsync(context, finished.Id));
@@ -969,6 +976,7 @@ namespace TripleTriadApi.Tests.Controllers
                 rng,
                 new MatchmakingService(
                     gameRepository,
+                    new PlayerRepository(context),
                     matchNotifier,
                     context,
                     gameLogic,
@@ -1049,6 +1057,20 @@ namespace TripleTriadApi.Tests.Controllers
                 }
             );
 
+            // A bot the matchmaking fallback can seat (plans/PLAN-025-bots/plan.md): a real row flagged IsBot and
+            // always online, so the online pool the fallback picks from is never empty.
+            context.Players.Add(
+                new Player
+                {
+                    Login = TestBots.Login,
+                    Email = "sparring@example.com",
+                    PasswordHash = "hash",
+                    Coins = 0,
+                    IsBot = true,
+                    Activity = 100,
+                }
+            );
+
             AddCatalogCards(context, [.. FirstHand, .. SecondHand, .. OpponentHand, UnownedCardId]);
             OwnCards(context, PlayerLogin, [.. FirstHand, .. SecondHand]);
             OwnCards(context, OpponentLogin, OpponentHand);
@@ -1101,7 +1123,7 @@ namespace TripleTriadApi.Tests.Controllers
 
         /// <summary>
         /// Always draws <paramref name="value"/>, clamped into the range each call asks for. Clamping keeps one
-        /// instance safe for a later draw whose pool holds a single element (the CPU hand), so a test can pin the
+        /// instance safe for a later draw whose pool holds a single element (the bot hand), so a test can pin the
         /// opening-turn coin — a draw of 2 — without scripting every draw after it.
         /// </summary>
         private sealed class FixedRandom(int value) : IRandomSource
@@ -1110,7 +1132,7 @@ namespace TripleTriadApi.Tests.Controllers
         }
 
         /// <summary>
-        /// An rng that always takes the top of the range, i.e. the strongest card the CPU's draw can reach — the
+        /// An rng that always takes the top of the range, i.e. the strongest card the bot's draw can reach — the
         /// level-weighted hand it produces is the catalogue's best five (one per level, strongest first).
         /// </summary>
         private sealed class TopOfRangeRandom : IRandomSource
@@ -1133,7 +1155,7 @@ namespace TripleTriadApi.Tests.Controllers
             /// <summary>Matches settled early (a forfeit) with the push reason.</summary>
             public List<(int MatchId, string Reason)> Completed { get; } = [];
 
-            /// <summary>Moves the server played on a client's behalf (the CPU): recorded for the same reason.</summary>
+            /// <summary>Moves the server played on a client's behalf (the bot): recorded for the same reason.</summary>
             public List<MovePush> Moves { get; } = [];
 
             public Task HandReadyAsync(int matchId)

@@ -10,9 +10,9 @@ namespace TripleTriadApi.Tests.Services
     /// Tests for the play pipeline's claim on a turn: a move is only ever written by the writer that took the turn, so
     /// one turn cannot be played twice and a board can never disagree with the hand row and the turn that describe it.
     ///
-    /// The case that prompted them (plans/PLAN-016-one-writer-per-turn/plan.md): during a match against the CPU the AI
+    /// The case that prompted them (plans/PLAN-016-one-writer-per-turn/plan.md): during a match against the bot the AI
     /// placed the *same card* twice, in two different cells, while its hand row was spent only once — so the board
-    /// showed four CPU cards against two unused hand rows, and the client (which counts the opponent's placements)
+    /// showed four bot cards against two unused hand rows, and the client (which counts the opponent's placements)
     /// said one card was left. Four placements with three spent rows is exactly what two writers of one turn leave
     /// behind, and nothing in the pipeline stopped them: the turn check is a read, and a snapshot taken before the
     /// other writer's move passes it.
@@ -25,16 +25,16 @@ namespace TripleTriadApi.Tests.Services
     {
         private const string Human = "argel";
 
-        /// <summary>One of the CPU's cards; the value-5 catalogue means no move captures anything.</summary>
-        private const int CpuCard = 6;
+        /// <summary>One of the bot's cards; the value-5 catalogue means no move captures anything.</summary>
+        private const int BotCard = 6;
 
-        /// <summary>The CPU's other card, so a spent hand row is visible in the counts.</summary>
-        private const int CpuSecondCard = 7;
+        /// <summary>The bot's other card, so a spent hand row is visible in the counts.</summary>
+        private const int BotSecondCard = 7;
 
         [Fact]
         public async Task PlayCard_RefusesTheSecondCardOfATurn_WhenItsWriterHoldsAStaleSnapshot()
         {
-            var race = await RaceTwoWritersAsync(firstCard: CpuCard, secondCard: CpuSecondCard);
+            var race = await RaceTwoWritersAsync(firstCard: BotCard, secondCard: BotSecondCard);
 
             Assert.True(race.First.IsSuccess);
             Assert.Equal(Human, race.First.UpdatedMatch!.CurrentPlayerTurn);
@@ -51,10 +51,10 @@ namespace TripleTriadApi.Tests.Services
         public async Task PlayCard_RefusesACardAlreadyOnTheBoard_EvenFromAStaleSnapshot()
         {
             // The same race offering the *same* card — the reported match's shape. Its tell was arithmetic: the client
-            // counted the CPU's cards from the placements (four, so "one card left"), while the database had spent only
+            // counted the bot's cards from the placements (four, so "one card left"), while the database had spent only
             // three of the five hand rows. Either guard may refuse the second copy (the spent hand row, or the turn
             // claim); what must never happen is the second copy landing and a board that outruns its own hand.
-            var race = await RaceTwoWritersAsync(firstCard: CpuCard, secondCard: CpuCard);
+            var race = await RaceTwoWritersAsync(firstCard: BotCard, secondCard: BotCard);
 
             Assert.False(race.Second.IsSuccess);
 
@@ -74,7 +74,7 @@ namespace TripleTriadApi.Tests.Services
                 .PlayCardAsync(match.Id, 1, x: 0, y: 0, playerId: Human);
 
             Assert.True(result.IsSuccess);
-            Assert.Equal(CpuOpponent.Login, result.UpdatedMatch!.CurrentPlayerTurn);
+            Assert.Equal(TestBots.Login, result.UpdatedMatch!.CurrentPlayerTurn);
 
             var placement = await context
                 .CardPlacements.AsNoTracking()
@@ -97,10 +97,10 @@ namespace TripleTriadApi.Tests.Services
             await SeedAsync(context);
             // A settled match whose turn was left on the looser's side is the shape a stray client move arrives in.
             var match = await AddMatchAsync(context, status: "completed");
-            await AddHandAsync(context, match.Id, CpuOpponent.Login, [CpuCard]);
+            await AddHandAsync(context, match.Id, TestBots.Login, [BotCard]);
 
             var result = await CreatePlayService(context)
-                .PlayCardAsync(match.Id, CpuCard, x: 0, y: 0, playerId: CpuOpponent.Login);
+                .PlayCardAsync(match.Id, BotCard, x: 0, y: 0, playerId: TestBots.Login);
 
             Assert.False(result.IsSuccess);
             Assert.Empty(
@@ -112,8 +112,8 @@ namespace TripleTriadApi.Tests.Services
         }
 
         /// <summary>
-        /// The two writers of one CPU turn, over one InMemory database: the first backend plays
-        /// <paramref name="firstCard"/> (both cards belong to the CPU and are still in hand), and the second — whose
+        /// The two writers of one bot turn, over one InMemory database: the first backend plays
+        /// <paramref name="firstCard"/> (both cards belong to the bot and are still in hand), and the second — whose
         /// context read the match *before* that move — plays <paramref name="secondCard"/> afterwards. The second
         /// context keeps the copy it read (the change tracker does not overwrite properties of a tracked entity), which
         /// is the snapshot a second backend on the same database is holding while the first one is mid-move.
@@ -126,15 +126,15 @@ namespace TripleTriadApi.Tests.Services
 
             await SeedAsync(firstBackend);
             var match = await AddMatchAsync(firstBackend, status: "active");
-            await AddHandAsync(firstBackend, match.Id, CpuOpponent.Login, [CpuCard, CpuSecondCard]);
+            await AddHandAsync(firstBackend, match.Id, TestBots.Login, [BotCard, BotSecondCard]);
 
             // The snapshot the second writer will move from, taken before anything is played.
             await new GameRepository(secondBackend).GetMatchByIdAsync(match.Id);
 
             var first = await CreatePlayService(firstBackend)
-                .PlayCardAsync(match.Id, firstCard, x: 2, y: 1, playerId: CpuOpponent.Login);
+                .PlayCardAsync(match.Id, firstCard, x: 2, y: 1, playerId: TestBots.Login);
             var second = await CreatePlayService(secondBackend)
-                .PlayCardAsync(match.Id, secondCard, x: 1, y: 2, playerId: CpuOpponent.Login);
+                .PlayCardAsync(match.Id, secondCard, x: 1, y: 2, playerId: TestBots.Login);
 
             return new RaceOutcome(first, second, database, match.Id);
         }
@@ -151,7 +151,7 @@ namespace TripleTriadApi.Tests.Services
                 await readBack
                     .CardPlacements.AsNoTracking()
                     .Where(placement =>
-                        placement.MatchId == race.MatchId && placement.PlayerId == CpuOpponent.Login
+                        placement.MatchId == race.MatchId && placement.PlayerId == TestBots.Login
                     )
                     .ToListAsync()
             );
@@ -163,7 +163,7 @@ namespace TripleTriadApi.Tests.Services
                     .PlayerHands.AsNoTracking()
                     .CountAsync(hand =>
                         hand.MatchId == race.MatchId
-                        && hand.PlayerId == CpuOpponent.Login
+                        && hand.PlayerId == TestBots.Login
                         && !hand.IsUsed
                     )
             );
@@ -205,19 +205,19 @@ namespace TripleTriadApi.Tests.Services
             );
 
         /// <summary>
-        /// A match with the CPU in player 2 — the seat the sentinel plays. The caller states the status and whose turn
+        /// A match with the bot in player 2 — the seat the sentinel plays. The caller states the status and whose turn
         /// it is, which is everything the pipeline and the claim read.
         /// </summary>
         private static async Task<Match> AddMatchAsync(
             TripleTriadContext context,
             string status,
-            string? currentPlayerTurn = CpuOpponent.Login
+            string? currentPlayerTurn = TestBots.Login
         )
         {
             var match = new Match
             {
                 Player1Id = Human,
-                Player2Id = CpuOpponent.Login,
+                Player2Id = TestBots.Login,
                 CurrentPlayerTurn = currentPlayerTurn,
                 Status = status,
                 CreatedAt = DateTime.UtcNow,

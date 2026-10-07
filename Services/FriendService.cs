@@ -132,8 +132,8 @@ namespace TripleTriadApi.Services
             var player = await _players.FindByLoginAsync(target);
             if (player is null)
             {
-                // Which is also how the CPU is refused rather than special-cased: `"AI"` is a sentinel with no row
-                // behind it, so it is simply a login that is not a player.
+                // A login with no row behind it — an unknown name. A bot is a row, so asking one is allowed: the
+                // request lands in its inbox and simply goes unanswered (plans/PLAN-025-bots/plan.md §3.6).
                 return FriendResult.Fail(FriendFailure.UnknownPlayer, $"No player called {target}.");
             }
 
@@ -291,7 +291,10 @@ namespace TripleTriadApi.Services
         {
             None,
 
-            /// <summary>No such player — which is how the CPU sentinel is refused, without a special case.</summary>
+            /// <summary>
+            /// No such player. A bot is a real row, so asking one is *not* refused here — it is simply never answered
+            /// (plans/PLAN-025-bots/plan.md §3.6).
+            /// </summary>
             UnknownPlayer,
 
             /// <summary>The caller named themselves.</summary>

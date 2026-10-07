@@ -38,7 +38,7 @@ namespace TripleTriadApi.Services
     /// once it is already correct. It was removed rather than shipped as security theatre.</para>
     ///
     /// <para><strong>Nothing here reveals whether an account exists.</strong> An unknown address produces the same
-    /// outcome as a real one, and so does the CPU sentinel — see <see cref="RequestResetAsync"/>.</para>
+    /// outcome as a real one, and so does the bot sentinel — see <see cref="RequestResetAsync"/>.</para>
     ///
     /// <para><strong>The code is stored hashed, the password is stored hashed, and neither is ever emailed.</strong>
     /// See <see cref="PasswordResetToken.TokenHash"/> and <see cref="Player.PasswordHash"/>.</para>
@@ -86,7 +86,7 @@ namespace TripleTriadApi.Services
         /// Issues a recovery code for the account owning <paramref name="email"/>, subject to the layered limits, and
         /// mails it.
         ///
-        /// Every refusal below is deliberately indistinguishable to the caller — unknown address, rate-limited and CPU
+        /// Every refusal below is deliberately indistinguishable to the caller — unknown address, rate-limited and bot
         /// sentinel all return something the controller turns into the same response — so the endpoint cannot be used
         /// to ask "does this email have an account here?".
         /// </summary>
@@ -99,8 +99,9 @@ namespace TripleTriadApi.Services
         {
             var player = await playerRepository.FindByEmailAsync(email.Trim());
 
-            // The CPU opponent is a real row with a real login, and no human should be able to take it over.
-            if (player is null || player.Login == CpuOpponent.Login)
+            // A bot is a real row, but it has no mailbox and no human to recover for, so its address is refused like an
+            // unknown one (plans/PLAN-025-bots/plan.md §3.6).
+            if (player is null || player.IsBot)
             {
                 return RecoveryRequestOutcome.NoSuchAccount;
             }

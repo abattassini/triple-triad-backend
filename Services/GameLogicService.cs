@@ -51,7 +51,7 @@ namespace TripleTriadApi.Services
         /// <para>
         /// <paramref name="currentPlacements"/> is the move's live board: <see cref="CaptureResolution.TryAdd"/>
         /// flips the ownership of every card it captures <em>in place</em>, which is what the caller then persists.
-        /// A caller that is only asking what a move <em>would</em> do — the CPU's lookahead — must therefore hand in
+        /// A caller that is only asking what a move <em>would</em> do — the bot's lookahead — must therefore hand in
         /// its own copy of the placements, or the captures it only imagined end up on the real board.
         /// </para>
         /// </summary>
@@ -112,7 +112,7 @@ namespace TripleTriadApi.Services
         }
 
         /// <summary>
-        /// The board's free cells in reading order — the order candidates are enumerated in and, for the CPU, the order
+        /// The board's free cells in reading order — the order candidates are enumerated in and, for the bot, the order
         /// its ties are broken in.
         /// </summary>
         public static List<(int X, int Y)> EmptyCells(IReadOnlyCollection<CardPlacement> board) =>
@@ -153,8 +153,8 @@ namespace TripleTriadApi.Services
         /// Every move <paramref name="actor"/> could make from this board and hand, in reading order, each resolved
         /// through <see cref="PlayCard"/> on its own copy of the board.
         /// <para>
-        /// Two callers want the same list for the same reason: the CPU picks one of these moves
-        /// (<see cref="CpuMoveSelector"/>) and a client is handed the whole list so a dropped card can land without
+        /// Two callers want the same list for the same reason: the bot picks one of these moves
+        /// (<see cref="BotMoveSelector"/>) and a client is handed the whole list so a dropped card can land without
         /// waiting for the round trip (<see cref="MovePreviewService"/>). Resolving each candidate through the real
         /// pipeline is what keeps both honest — a SAME or PLUS flip counts here exactly as it would in play, so a change
         /// to the rules can never leave either caller evaluating a board that no longer behaves the way it assumes.
@@ -704,8 +704,8 @@ namespace TripleTriadApi.Services
         }
 
         /// <summary>
-        /// The five cards the CPU sits down with. The level is drawn first with the CPU's own weights
-        /// (<see cref="CpuOpponent.HandLevelWeight"/> — squared, so its hand averages level 7.9 instead of the 5.6
+        /// The five cards the bot sits down with. The level is drawn first with the bot's own weights
+        /// (<see cref="BotOpponent.HandLevelWeight"/> — squared, so its hand averages level 7.9 instead of the 5.6
         /// of the uniform draw above), then a card is taken from that level. The weights apply per level rather than
         /// per card, so a level holding only a few cards is neither over- nor under-represented.
         /// <para>
@@ -714,7 +714,7 @@ namespace TripleTriadApi.Services
         /// catalogue simply yields the cards it has, up to <paramref name="handSize"/>.
         /// </para>
         /// </summary>
-        public List<Card> GetCpuHand(
+        public List<Card> GetBotHand(
             List<Card> availableCards,
             IRandomSource random,
             int handSize = HandSize
@@ -725,7 +725,7 @@ namespace TripleTriadApi.Services
 
             while (hand.Count < handSize && byLevel.Count > 0)
             {
-                var level = DrawCpuLevel(byLevel, random);
+                var level = DrawBotLevel(byLevel, random);
                 var pool = byLevel[level];
                 var card = pool[random.Next(pool.Count)];
 
@@ -758,14 +758,14 @@ namespace TripleTriadApi.Services
         /// cards are all used — can never be drawn and the levels that are left keep their ratio: with every level
         /// populated the total is the 385 of the formula.
         /// </summary>
-        private static int DrawCpuLevel(Dictionary<int, List<Card>> byLevel, IRandomSource random)
+        private static int DrawBotLevel(Dictionary<int, List<Card>> byLevel, IRandomSource random)
         {
             var totalWeight = 0;
             for (var level = Card.MinLevel; level <= Card.MaxLevel; level++)
             {
                 if (byLevel.ContainsKey(level))
                 {
-                    totalWeight += CpuOpponent.HandLevelWeight(level);
+                    totalWeight += BotOpponent.HandLevelWeight(level);
                 }
             }
 
@@ -778,7 +778,7 @@ namespace TripleTriadApi.Services
                     continue;
                 }
 
-                cumulative += CpuOpponent.HandLevelWeight(level);
+                cumulative += BotOpponent.HandLevelWeight(level);
                 if (pick < cumulative)
                 {
                     return level;
@@ -786,7 +786,7 @@ namespace TripleTriadApi.Services
             }
 
             throw new InvalidOperationException(
-                "The card catalogue has no drawable level for the CPU hand."
+                "The card catalogue has no drawable level for the bot hand."
             );
         }
 
@@ -798,7 +798,7 @@ namespace TripleTriadApi.Services
         /// <summary>
         /// Who opens a match: player 1 or player 2, drawn at random once both seats are known. It replaces the old
         /// "whoever created the match starts", so neither the waiting creator nor the joiner — nor the human against
-        /// the CPU — is favoured (see plans/PLAN-024-random-first-turn/plan.md). The draw goes through
+        /// the bot — is favoured (see plans/PLAN-024-random-first-turn/plan.md). The draw goes through
         /// <see cref="IRandomSource"/> so a test can script the coin.
         /// </summary>
         public string GetStartingPlayer(string player1Id, string player2Id, IRandomSource random)

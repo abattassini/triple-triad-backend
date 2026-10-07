@@ -59,6 +59,11 @@ namespace TripleTriadApi.Data
                 // Credential generation — see the property's comment. Defaulted so existing rows stay valid.
                 entity.Property(e => e.SessionVersion).HasDefaultValue(0);
 
+                // Bots (plans/PLAN-025-bots/plan.md): an ordinary player row flagged as emulated. Defaulted so an
+                // existing row (and any insert that forgets them) reads as a human rather than a bot.
+                entity.Property(e => e.IsBot).HasDefaultValue(false);
+                entity.Property(e => e.Activity).HasDefaultValue(0);
+
                 // Unique constraints for authentication
                 entity.HasIndex(e => e.Login).IsUnique();
                 entity.HasIndex(e => e.Email).IsUnique();

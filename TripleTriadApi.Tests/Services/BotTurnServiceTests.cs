@@ -7,28 +7,28 @@ using TripleTriadApi.Services;
 namespace TripleTriadApi.Tests.Services
 {
     /// <summary>
-    /// Tests for the CPU's turn engine: it plays exactly one legal move once the thinking time has passed — through
+    /// Tests for the bot's turn engine: it plays exactly one legal move once the thinking time has passed — through
     /// the shared play pipeline, so out-of-turn and illegal moves are impossible — pushes it to the match group, and
     /// leaves every other match alone.
     ///
     /// `AdvanceAsync` takes its dependencies and the current time explicitly (no host, no timer), so the clocks are
     /// driven with fixed timestamps over an EF InMemory database and the pushes are recorded instead of broadcast.
     /// </summary>
-    public class CpuTurnServiceTests
+    public class BotTurnServiceTests
     {
         private const string PlayerOne = "argel";
 
         /// <summary>Player 1's five cards.</summary>
         private static readonly int[] HumanHand = [1, 2, 3, 4, 5];
 
-        /// <summary>The CPU's five cards (disjoint ids, so a hand can never double up).</summary>
-        private static readonly int[] CpuHand = [6, 7, 8, 9, 10];
+        /// <summary>The bot's five cards (disjoint ids, so a hand can never double up).</summary>
+        private static readonly int[] BotHand = [6, 7, 8, 9, 10];
 
-        /// <summary>One of the human's two corner cards in the capture test: rank 1, so a CPU card beats it.</summary>
+        /// <summary>One of the human's two corner cards in the capture test: rank 1, so a bot card beats it.</summary>
         private const int HumanCornerA = 21;
 
         /// <summary>
-        /// The other corner. The CPU's own card sits between the two, so no single move can take both — which is what
+        /// The other corner. The bot's own card sits between the two, so no single move can take both — which is what
         /// makes a card that changed hands without being next to the played square a bug rather than a capture.
         /// </summary>
         private const int HumanCornerB = 22;
@@ -44,10 +44,10 @@ namespace TripleTriadApi.Tests.Services
                 context,
                 status: "active",
                 activatedAt: now - TimeSpan.FromMinutes(1),
-                currentPlayerTurn: CpuOpponent.Login
+                currentPlayerTurn: TestBots.Login
             );
             await AddHandAsync(context, match.Id, PlayerOne, HumanHand, usedCards: 1);
-            await AddHandAsync(context, match.Id, CpuOpponent.Login, CpuHand);
+            await AddHandAsync(context, match.Id, TestBots.Login, BotHand);
             await AddPlacementAsync(
                 context,
                 match.Id,
@@ -63,14 +63,14 @@ namespace TripleTriadApi.Tests.Services
             var board = await context
                 .CardPlacements.Where(placement => placement.MatchId == match.Id)
                 .ToListAsync();
-            var reply = Assert.Single(board, placement => placement.PlayerId == CpuOpponent.Login);
+            var reply = Assert.Single(board, placement => placement.PlayerId == TestBots.Login);
 
             // A legal move: the occupied cell was avoided, the card left its hand, and the turn is the human's again.
             Assert.NotEqual((1, 1), (reply.X, reply.Y));
             Assert.Equal(
                 4,
                 await context.PlayerHands.CountAsync(hand =>
-                    hand.PlayerId == CpuOpponent.Login && !hand.IsUsed
+                    hand.PlayerId == TestBots.Login && !hand.IsUsed
                 )
             );
 
@@ -79,7 +79,7 @@ namespace TripleTriadApi.Tests.Services
             Assert.Equal("active", settled.Status);
 
             var push = Assert.Single(notifier.Moves);
-            Assert.Equal(CpuOpponent.Login, push.PlayerId);
+            Assert.Equal(TestBots.Login, push.PlayerId);
             Assert.Equal(reply.CardId, push.CardId);
             Assert.Equal((reply.X, reply.Y), (push.X, push.Y));
             Assert.False(push.Result.IsGameComplete);
@@ -97,10 +97,10 @@ namespace TripleTriadApi.Tests.Services
                 context,
                 status: "active",
                 activatedAt: now - TimeSpan.FromMinutes(1),
-                currentPlayerTurn: CpuOpponent.Login
+                currentPlayerTurn: TestBots.Login
             );
             await AddHandAsync(context, match.Id, PlayerOne, HumanHand, usedCards: 1);
-            await AddHandAsync(context, match.Id, CpuOpponent.Login, CpuHand);
+            await AddHandAsync(context, match.Id, TestBots.Login, BotHand);
             await AddPlacementAsync(
                 context,
                 match.Id,
@@ -113,13 +113,13 @@ namespace TripleTriadApi.Tests.Services
 
             await AdvanceAsync(gameRepository, gamePlayService, selector, notifier, now);
 
-            // Half a second after the human's move the CPU is still "thinking": nothing was played, nothing pushed.
+            // Half a second after the human's move the bot is still "thinking": nothing was played, nothing pushed.
             Assert.Equal(
                 1,
                 await context.CardPlacements.CountAsync(placement => placement.MatchId == match.Id)
             );
             Assert.Equal(
-                CpuOpponent.Login,
+                TestBots.Login,
                 (await context.Matches.SingleAsync(stored => stored.Id == match.Id))
                     .CurrentPlayerTurn
             );
@@ -140,7 +140,7 @@ namespace TripleTriadApi.Tests.Services
                 currentPlayerTurn: PlayerOne
             );
             await AddHandAsync(context, match.Id, PlayerOne, HumanHand, usedCards: 1);
-            await AddHandAsync(context, match.Id, CpuOpponent.Login, CpuHand);
+            await AddHandAsync(context, match.Id, TestBots.Login, BotHand);
 
             await AdvanceAsync(gameRepository, gamePlayService, selector, notifier, now);
 
@@ -156,7 +156,7 @@ namespace TripleTriadApi.Tests.Services
             await SeedAsync(context);
             var (gameRepository, gamePlayService, selector, notifier) = CreateEngine(context);
 
-            // A CPU seat on a match that is not being played: waiting, completed and abandoned rows all look "ready"
+            // A bot seat on a match that is not being played: waiting, completed and abandoned rows all look "ready"
             // by turn alone, and none of them may be touched.
             foreach (var status in new[] { "waiting", "completed", "abandoned" })
             {
@@ -164,9 +164,9 @@ namespace TripleTriadApi.Tests.Services
                     context,
                     status: status,
                     activatedAt: now - TimeSpan.FromMinutes(10),
-                    currentPlayerTurn: CpuOpponent.Login
+                    currentPlayerTurn: TestBots.Login
                 );
-                await AddHandAsync(context, match.Id, CpuOpponent.Login, CpuHand);
+                await AddHandAsync(context, match.Id, TestBots.Login, BotHand);
             }
 
             await AdvanceAsync(gameRepository, gamePlayService, selector, notifier, now);
@@ -186,10 +186,10 @@ namespace TripleTriadApi.Tests.Services
                 context,
                 status: "active",
                 activatedAt: now - TimeSpan.FromMinutes(1),
-                currentPlayerTurn: CpuOpponent.Login
+                currentPlayerTurn: TestBots.Login
             );
             await AddHandAsync(context, match.Id, PlayerOne, HumanHand, usedCards: 1);
-            await AddHandAsync(context, match.Id, CpuOpponent.Login, CpuHand);
+            await AddHandAsync(context, match.Id, TestBots.Login, BotHand);
             await AddPlacementAsync(
                 context,
                 match.Id,
@@ -222,12 +222,12 @@ namespace TripleTriadApi.Tests.Services
                 context,
                 status: "active",
                 activatedAt: now - TimeSpan.FromMinutes(1),
-                currentPlayerTurn: CpuOpponent.Login
+                currentPlayerTurn: TestBots.Login
             );
 
-            // The board is one card short and the CPU holds exactly one: its move finishes the match.
+            // The board is one card short and the bot holds exactly one: its move finishes the match.
             await AddHandAsync(context, match.Id, PlayerOne, HumanHand);
-            await AddHandAsync(context, match.Id, CpuOpponent.Login, CpuHand, usedCards: 4);
+            await AddHandAsync(context, match.Id, TestBots.Login, BotHand, usedCards: 4);
 
             var cells = 0;
             for (var y = 0; y < 3; y++)
@@ -243,7 +243,7 @@ namespace TripleTriadApi.Tests.Services
                         context,
                         match.Id,
                         cardId: HumanHand[cells % HumanHand.Length],
-                        playerId: cells % 2 == 0 ? PlayerOne : CpuOpponent.Login,
+                        playerId: cells % 2 == 0 ? PlayerOne : TestBots.Login,
                         x: x,
                         y: y,
                         placedAt: now - TimeSpan.FromSeconds(30 - cells)
@@ -266,7 +266,7 @@ namespace TripleTriadApi.Tests.Services
             Assert.True(push.Result.IsGameComplete);
             Assert.NotNull(push.Rewards);
 
-            // The human is paid as usual (the CPU's own half is skipped), so the win/loss/tie table is untouched by it.
+            // The human is paid as usual (the bot's own half is skipped), so the win/loss/tie table is untouched by it.
             Assert.True(await CoinsAsync(context, PlayerOne) > 0);
         }
 
@@ -279,12 +279,12 @@ namespace TripleTriadApi.Tests.Services
             {
                 for (var placements = 0; placements < 9; placements++)
                 {
-                    var think = CpuOpponent.ThinkTime(matchId, placements);
+                    var think = BotOpponent.ThinkTime(matchId, placements);
 
                     // The whole band is the window plus the flat pause agreed on 2026-09-27, and every delay is inside
                     // it: a move is never answered faster than the pause, and never later than the window allows.
-                    Assert.True(think >= CpuOpponent.ThinkingPause + CpuOpponent.MinThink);
-                    Assert.True(think <= CpuOpponent.ThinkingPause + CpuOpponent.MaxThink);
+                    Assert.True(think >= BotOpponent.ThinkingPause + BotOpponent.MinThink);
+                    Assert.True(think <= BotOpponent.ThinkingPause + BotOpponent.MaxThink);
                     delays.Add(think);
                 }
             }
@@ -301,8 +301,8 @@ namespace TripleTriadApi.Tests.Services
 
             // An empty board falls back to the activation stamp…
             Assert.Equal(
-                activated + CpuOpponent.ThinkTime(match.Id, 0),
-                CpuOpponent.MoveDueAt(match, [])
+                activated + BotOpponent.ThinkTime(match.Id, 0),
+                BotOpponent.MoveDueAt(match, [])
             );
 
             // …and once cards are down, the newest placement is the clock.
@@ -313,19 +313,19 @@ namespace TripleTriadApi.Tests.Services
             };
 
             Assert.Equal(
-                activated.AddSeconds(9) + CpuOpponent.ThinkTime(match.Id, 2),
-                CpuOpponent.MoveDueAt(match, placements)
+                activated.AddSeconds(9) + BotOpponent.ThinkTime(match.Id, 2),
+                BotOpponent.MoveDueAt(match, placements)
             );
 
-            // A match with neither has nothing to measure from, so the CPU leaves it alone.
+            // A match with neither has nothing to measure from, so the bot leaves it alone.
             var stale = new Match { Id = 5, Status = "active", ActivatedAt = null };
-            Assert.Null(CpuOpponent.MoveDueAt(stale, []));
+            Assert.Null(BotOpponent.MoveDueAt(stale, []));
         }
 
         /// <summary>
-        /// The CPU evaluates every candidate it has — each of its cards against each empty cell — and only the move it
+        /// The bot evaluates every candidate it has — each of its cards against each empty cell — and only the move it
         /// actually plays may flip anything. When a candidate was resolved on the match's own placements, the flips it
-        /// *would* have made stayed made (and were saved with the real move), so cards next to squares the CPU merely
+        /// *would* have made stayed made (and were saved with the real move), so cards next to squares the bot merely
         /// considered changed hands along with the ones the move really took.
         /// </summary>
         [Fact]
@@ -340,9 +340,9 @@ namespace TripleTriadApi.Tests.Services
                 context,
                 status: "active",
                 activatedAt: now - TimeSpan.FromMinutes(1),
-                currentPlayerTurn: CpuOpponent.Login
+                currentPlayerTurn: TestBots.Login
             );
-            // The human's two rank-1 cards sit in opposite corners with the CPU's own card between them: no single
+            // The human's two rank-1 cards sit in opposite corners with the bot's own card between them: no single
             // move can take both, but the candidates around each corner each take one.
             await AddHandAsync(
                 context,
@@ -351,7 +351,7 @@ namespace TripleTriadApi.Tests.Services
                 [HumanCornerA, HumanCornerB, 1, 2, 3],
                 usedCards: 2
             );
-            await AddHandAsync(context, match.Id, CpuOpponent.Login, CpuHand, usedCards: 1);
+            await AddHandAsync(context, match.Id, TestBots.Login, BotHand, usedCards: 1);
             await AddPlacementAsync(
                 context,
                 match.Id,
@@ -373,8 +373,8 @@ namespace TripleTriadApi.Tests.Services
             await AddPlacementAsync(
                 context,
                 match.Id,
-                CpuHand[0],
-                CpuOpponent.Login,
+                BotHand[0],
+                TestBots.Login,
                 x: 1,
                 y: 1,
                 placedAt: now - TimeSpan.FromSeconds(9)
@@ -390,7 +390,7 @@ namespace TripleTriadApi.Tests.Services
             // Every card that changed hands is a neighbour of the square the move was played on…
             var flipped = board
                 .Where(placement =>
-                    placement.PlayerId == PlayerOne && placement.Owner == CpuOpponent.Login
+                    placement.PlayerId == PlayerOne && placement.Owner == TestBots.Login
                 )
                 .ToList();
             Assert.NotEmpty(flipped);
@@ -403,7 +403,7 @@ namespace TripleTriadApi.Tests.Services
                     )
             );
 
-            // …and the corner the CPU only considered taking is still the human's.
+            // …and the corner the bot only considered taking is still the human's.
             Assert.Equal(
                 new[] { (2, 2) },
                 board
@@ -418,24 +418,34 @@ namespace TripleTriadApi.Tests.Services
         private static async Task AdvanceAsync(
             GameRepository gameRepository,
             GamePlayService gamePlayService,
-            CpuMoveSelector selector,
+            BotMoveSelector selector,
             RecordingMatchNotifier notifier,
             DateTime now
         ) =>
-            await CpuTurnService.AdvanceAsync(
+            await BotTurnService.AdvanceAsync(
                 gameRepository,
                 gamePlayService,
                 selector,
                 notifier,
                 new FixedRandom(0),
+                LoadedBots(),
                 now
             );
+
+        /// <summary>A registry holding the one login these tests seed the machine as.</summary>
+        private static BotRegistry LoadedBots()
+        {
+            var registry = new BotRegistry();
+            registry.Load([new BotRegistry.Bot(TestBots.Login, 100)]);
+
+            return registry;
+        }
 
         /// <summary>The engine's collaborators, wired to this test's InMemory database.</summary>
         private static (
             GameRepository GameRepository,
             GamePlayService GamePlayService,
-            CpuMoveSelector Selector,
+            BotMoveSelector Selector,
             RecordingMatchNotifier Notifier
         ) CreateEngine(TripleTriadContext context)
         {
@@ -448,7 +458,7 @@ namespace TripleTriadApi.Tests.Services
                     gameLogic,
                     new MatchRewardService(new PlayerRepository(context))
                 ),
-                new CpuMoveSelector(gameLogic),
+                new BotMoveSelector(gameLogic),
                 new RecordingMatchNotifier()
             );
         }
@@ -461,7 +471,7 @@ namespace TripleTriadApi.Tests.Services
             );
 
         /// <summary>
-        /// One match row with the CPU in player 2. The caller states the status, the activation stamp and whose turn
+        /// One match row with the bot in player 2. The caller states the status, the activation stamp and whose turn
         /// it is, which is everything the engine reads.
         /// </summary>
         private static async Task<Match> AddMatchAsync(
@@ -469,7 +479,7 @@ namespace TripleTriadApi.Tests.Services
             string status,
             DateTime? activatedAt = null,
             string? currentPlayerTurn = null,
-            string player2Id = CpuOpponent.Login
+            string player2Id = TestBots.Login
         )
         {
             var match = new Match
@@ -515,7 +525,7 @@ namespace TripleTriadApi.Tests.Services
             await context.SaveChangesAsync();
         }
 
-        /// <summary>One card on the board, aged by <paramref name="placedAt"/> — the CPU's thinking clock.</summary>
+        /// <summary>One card on the board, aged by <paramref name="placedAt"/> — the bot's thinking clock.</summary>
         private static async Task AddPlacementAsync(
             TripleTriadContext context,
             int matchId,
@@ -587,7 +597,7 @@ namespace TripleTriadApi.Tests.Services
 
         /// <summary>
         /// The two rank-1 cards the capture test puts in the corners: the seeded catalogue is rank 5 on every side, so
-        /// these are the only cards on that board a CPU card actually beats.
+        /// these are the only cards on that board a bot card actually beats.
         /// </summary>
         private static async Task SeedWeakCornersAsync(TripleTriadContext context)
         {

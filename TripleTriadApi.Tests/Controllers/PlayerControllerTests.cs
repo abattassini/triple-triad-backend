@@ -328,8 +328,10 @@ namespace TripleTriadApi.Tests.Controllers
                     "cardsOwned",
                     "experience",
                     "friendship",
+                    "isBot",
                     "login",
                     "losses",
+                    "online",
                     "ties",
                     "wins",
                 },
@@ -377,7 +379,7 @@ namespace TripleTriadApi.Tests.Controllers
 
         [Theory]
         [InlineData("nobody-here")] // an unknown login
-        [InlineData(CpuOpponent.Login)] // the CPU sentinel: an identity, never a profile
+        [InlineData(TestBots.Login)] // the bot sentinel: an identity, never a profile
         public async Task Profile_WithNoSuchPlayer_Returns404(string login)
         {
             using var context = CreateContext();
@@ -496,7 +498,8 @@ namespace TripleTriadApi.Tests.Controllers
                 new ResetPasswordRequestValidator(),
                 new TokenService(),
                 PasswordRecoveryTestHarness.CreateService(context, new RecordingEmailSender()),
-                CreateFriendService(context)
+                CreateFriendService(context),
+                new ConnectionPresence()
             );
 
             var claims = login is null

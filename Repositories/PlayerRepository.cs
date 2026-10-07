@@ -27,6 +27,12 @@ namespace TripleTriadApi.Repositories
         /// answer, which is normal here: nothing keys a friendship on a foreign key.
         /// </summary>
         Task<List<Player>> FindByLoginsAsync(IReadOnlyCollection<string> logins);
+
+        /// <summary>
+        /// Every bot, for the matchmaking fallback and the presence cache (plans/PLAN-025-bots/plan.md). The cohort is
+        /// tiny, so this is the whole set, never a page.
+        /// </summary>
+        Task<List<Player>> GetBotsAsync();
     }
 
     public class PlayerRepository(TripleTriadContext context) : IPlayerRepository
@@ -120,6 +126,11 @@ namespace TripleTriadApi.Repositories
             return await _context
                 .Players.Where(player => targets.Contains(player.Login))
                 .ToListAsync();
+        }
+
+        public async Task<List<Player>> GetBotsAsync()
+        {
+            return await _context.Players.Where(player => player.IsBot).ToListAsync();
         }
     }
 }

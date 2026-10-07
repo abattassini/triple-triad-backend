@@ -2,7 +2,7 @@ namespace TripleTriadApi.Services
 {
     /// <summary>
     /// The password-recovery tunables, bound from the <c>PasswordReset</c> configuration section. They live here for
-    /// the same reason the CPU opponent's live in <see cref="CpuOpponent"/> and the match deadlines in
+    /// the same reason the bot opponent's live in <see cref="BotOpponent"/> and the match deadlines in
     /// <see cref="MatchTimeouts"/>: one place to look, one place to change, and every value overridable by
     /// configuration so the limits can be tightened after an incident without a code change.
     ///

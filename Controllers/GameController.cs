@@ -88,7 +88,7 @@ namespace TripleTriadApi.Controllers
 
         /// <summary>
         /// Stamps a match's activation the moment both hands are filed — the point the board opens. It matters for a
-        /// match against the CPU: the CPU's opening move is timed from <c>ActivatedAt</c>, so a CPU that drew the first
+        /// match against the bot: the bot's opening move is timed from <c>ActivatedAt</c>, so a bot that drew the first
         /// turn waits until the human's hand is in instead of playing over the SelectHand screen (PLAN-024). A no-op
         /// while a hand is still missing, and while the stamp is already set (the PvP paths set it at join/claim).
         /// </summary>
@@ -154,13 +154,13 @@ namespace TripleTriadApi.Controllers
                     );
                 }
 
-                // Determine opponent: null = waiting for PvP, "AI" = the CPU, which is seated as player 2 straight away
+                // Determine opponent: null = a match waiting for a human (the normal Quick Match target). A named
+                // opponent is seated straight away; bots are seated by the matchmaking fallback, not here (PLAN-025).
                 string? opponent = request.OpponentId;
 
-                // The hand the client picked, or "I will pick once there is an opponent". A waiting PvP match and a
-                // match against the CPU both support the flag — in both cases the only hand missing is the human's,
-                // and the pick arrives through POST match/{id}/hand. Any other named opponent would leave a real
-                // player sitting hand-less, and a list plus the flag describes the same hand twice.
+                // The hand the client picked, or "I will pick once there is an opponent". Only a match waiting for an
+                // opponent supports the flag — a named opponent must bring a hand, and a list plus the flag would
+                // describe the same hand twice.
                 if (request.PickHandLater && request.CardIds is { Length: > 0 })
                 {
                     return BadRequest(
@@ -168,14 +168,10 @@ namespace TripleTriadApi.Controllers
                     );
                 }
 
-                if (request.PickHandLater && !string.IsNullOrEmpty(opponent) && opponent != CpuOpponent.Login)
+                if (request.PickHandLater && !string.IsNullOrEmpty(opponent))
                 {
                     return BadRequest(
-                        new
-                        {
-                            error =
-                                "PickHandLater only applies to a match waiting for an opponent, or to a match against the CPU.",
-                        }
+                        new { error = "PickHandLater only applies to a match waiting for an opponent." }
                     );
                 }
 
@@ -200,9 +196,9 @@ namespace TripleTriadApi.Controllers
                 // rejected request still writes nothing.
                 await _matchmaking.AbandonUnfinishedAsync(playerId);
 
-                // Create new match with the requested rules. Who opens is drawn here when both seats are known (the
-                // CPU, or a named opponent); a match waiting for a human carries the creator as a placeholder, and the
-                // claim draws the real opener once the opponent lands (PLAN-024).
+                // Create new match with the requested rules. Who opens is drawn here when both seats are known (a named
+                // opponent); a match waiting for a human carries the creator as a placeholder, and the claim draws the
+                // real opener once the opponent lands (PLAN-024).
                 var match = await _gameRepository.CreateMatchAsync(
                     playerId,
                     opponent,
@@ -215,7 +211,7 @@ namespace TripleTriadApi.Controllers
                 var allCards = await _gameRepository.GetAllCardsAsync();
 
                 // Player 1 sits down with the cards they picked, a random draw, or nothing at all when they pick once
-                // an opponent is there. Player 2 only has a hand at creation on the AI path, and there it is the CPU's
+                // an opponent is there. Player 2 only has a hand at creation on the AI path, and there it is the bot's
                 // level-weighted draw — the uniform draw above is the one a human gets.
                 List<Card> player1Hand;
                 if (hasChosenHand)
@@ -232,7 +228,7 @@ namespace TripleTriadApi.Controllers
                 }
 
                 List<Card> player2Hand =
-                    match.Status == "active" ? _gameLogic.GetCpuHand(allCards, _random) : [];
+                    match.Status == "active" ? _gameLogic.GetBotHand(allCards, _random) : [];
 
                 if (player1Hand.Count > 0 || player2Hand.Count > 0)
                 {
@@ -245,9 +241,85 @@ namespace TripleTriadApi.Controllers
                     );
                 }
 
-                // A CPU match is created active with both hands in (the legacy `CardIds` path): the board is open, so
-                // stamp the activation the CPU's opening move is timed from.
+                // A bot match is created active with both hands in (the legacy `CardIds` path): the board is open, so
+                // stamp the activation the bot's opening move is timed from.
                 await ActivateIfHandsReadyAsync(match);
+
+                var playerHand = await _gameRepository.GetPlayerHandAsync(match.Id, playerId);
+
+                return Ok(
+                    new
+                    {
+                        match = new
+                        {
+                            match.Id,
+                            match.Player1Id,
+                            match.Player2Id,
+                            match.CurrentPlayerTurn,
+                            match.Status,
+                            match.Player1Score,
+                            match.Player2Score,
+                            rules = match.Rules.ToNames(),
+                        },
+                        playerHand = playerHand
+                            .Where(ph => !ph.IsUsed)
+                            .Select(ph => new
+                            {
+                                ph.Card.Id,
+                                ph.Card.Name,
+                                ph.Card.Image,
+                                ph.Card.TopValue,
+                                ph.Card.RightValue,
+                                ph.Card.BottomValue,
+                                ph.Card.LeftValue,
+                                ph.Card.Element,
+                                ph.Card.Level,
+                            })
+                            .ToList(),
+                    }
+                );
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// The Quick Match fallback: put the player against a bot (plans/PLAN-025-bots/plan.md §3.3). The client calls
+        /// it only after its wait found no human — a human who turned up in the meantime is returned instead, so this
+        /// never takes a real game away. The answer is shaped like create/join, so the picker opens the same way it does
+        /// for a human opponent.
+        /// </summary>
+        [Authorize]
+        [HttpPost("match/quick-bot")]
+        public async Task<ActionResult<object>> QuickBotMatch([FromBody] QuickMatchRequest? request = null)
+        {
+            try
+            {
+                var playerId = GetCurrentUserId();
+                if (string.IsNullOrEmpty(playerId))
+                {
+                    return Unauthorized(new { error = "User not authenticated" });
+                }
+
+                if (!MatchRuleExtensions.TryParseAll(request?.Rules, out var rules))
+                {
+                    return BadRequest(
+                        new
+                        {
+                            error =
+                                "Unknown rule. Supported rules: "
+                                + string.Join(", ", MatchRuleExtensions.SupportedRuleNames()),
+                        }
+                    );
+                }
+
+                var match = await _matchmaking.FindOrCreateBotMatchAsync(playerId, rules, DateTime.UtcNow);
+                if (match is null)
+                {
+                    return StatusCode(503, new { error = "No opponents are available right now." });
+                }
 
                 var playerHand = await _gameRepository.GetPlayerHandAsync(match.Id, playerId);
 
@@ -561,8 +633,8 @@ namespace TripleTriadApi.Controllers
 
                 await _gameRepository.ReplacePlayerHandAsync(matchId, playerId, handRead.Hand);
 
-                // Both hands may now be in (the CPU's was filed at creation): the board opens, so stamp the activation
-                // a CPU opening move would be timed from (PLAN-024).
+                // Both hands may now be in (the bot's was filed at creation): the board opens, so stamp the activation
+                // a bot opening move would be timed from (PLAN-024).
                 await ActivateIfHandsReadyAsync(match);
 
                 // The opponent may be sitting on "waiting for your opponent to pick their cards" (or still picking):

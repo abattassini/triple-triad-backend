@@ -30,6 +30,7 @@ namespace TripleTriadApi.Services
     /// </summary>
     public class MatchmakingService(
         IGameRepository gameRepository,
+        IPlayerRepository playerRepository,
         IMatchNotifier notifier,
         TripleTriadContext context,
         GameLogicService gameLogic,
@@ -73,7 +74,16 @@ namespace TripleTriadApi.Services
             {
                 match.Status = "abandoned";
                 await gameRepository.UpdateMatchAsync(match);
-                await notifier.AbandonedAsync(match.Id, AbandonedByNewSearchReason);
+
+                // Tell the *other* seat its match is gone. A match still waiting for an opponent has no other seat,
+                // and the only member of its group is the player who just gave it up — so notifying would only echo
+                // the reason back at them (the flash of "the other player started another match" right before their
+                // own new game opens, e.g. when the bot fallback replaces their search). Only an abandoned match that
+                // had an opponent has anyone to tell.
+                if (!string.IsNullOrEmpty(match.Player2Id))
+                {
+                    await notifier.AbandonedAsync(match.Id, AbandonedByNewSearchReason);
+                }
             }
         }
 
@@ -130,6 +140,70 @@ namespace TripleTriadApi.Services
                 // Nobody compatible is waiting, so start the match and be the one who is found. The opener is a
                 // placeholder here — there is no second player to draw against yet — and the claim draws the real one.
                 return await gameRepository.CreateMatchAsync(playerId, null, rules, playerId);
+            });
+        }
+
+        /// <summary>
+        /// Seats the player against a bot (plans/PLAN-025-bots/plan.md §3.3): the fallback when no human turned up in
+        /// the wait window. It never steals a real game — an active match found here is returned untouched — and
+        /// otherwise abandons the player's waiting match and starts one against an online bot, whose hand is drawn from
+        /// the catalogue so only the human's is still to be picked. Returns null only when the database holds no bots.
+        /// </summary>
+        public async Task<Match?> FindOrCreateBotMatchAsync(
+            string playerId,
+            List<MatchRule> rules,
+            DateTime now
+        )
+        {
+            // A human may have joined during the wait; that game is theirs, and the fallback must not replace it.
+            var existing = (
+                await gameRepository.GetUnfinishedMatchesForPlayerAsync(playerId)
+            ).FirstOrDefault(match => match.Status == "active");
+            if (existing is not null)
+            {
+                return existing;
+            }
+
+            return await RunExclusiveAsync(async () =>
+            {
+                await AbandonUnfinishedAsync(playerId);
+
+                var bots = await playerRepository.GetBotsAsync();
+                if (bots.Count == 0)
+                {
+                    return null;
+                }
+
+                // Prefer a bot the presence rule calls online. The ≥3 floor means there normally are some; the
+                // highest-activity bot is the guarantee for the rare bucket where the rolls leave fewer.
+                var infos = bots.Select(bot => new BotRegistry.Bot(bot.Login, bot.Activity)).ToList();
+                var onlineLogins = BotPresence.OnlineBots(infos, now);
+                var pool = bots.Where(bot => onlineLogins.Contains(bot.Login)).ToList();
+                var bot =
+                    pool.Count > 0
+                        ? pool[random.Next(pool.Count)]
+                        : bots.OrderByDescending(candidate => candidate.Activity).First();
+
+                var match = await gameRepository.CreateMatchAsync(
+                    playerId,
+                    bot.Login,
+                    rules,
+                    gameLogic.GetStartingPlayer(playerId, bot.Login, random)
+                );
+
+                // The bot brings a hand of its own; the human picks theirs through the SelectHand call, exactly as
+                // against the old bot — so only the human's hand is missing, and a bot that drew the opening turn waits
+                // for it (PLAN-024's activation rule, stamped when the picker files the hand).
+                var catalogue = await gameRepository.GetAllCardsAsync();
+                await gameRepository.CreatePlayerHandsAsync(
+                    match.Id,
+                    match.Player1Id,
+                    match.Player2Id,
+                    [],
+                    gameLogic.GetBotHand(catalogue, random)
+                );
+
+                return match;
             });
         }
 

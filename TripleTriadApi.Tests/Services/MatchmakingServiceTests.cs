@@ -93,6 +93,53 @@ namespace TripleTriadApi.Tests.Services
         }
 
         [Fact]
+        public async Task FindOrCreateBotMatch_SeatsAnOnlineBot_WithItsOwnHand()
+        {
+            using var context = CreateContext(Guid.NewGuid().ToString());
+            context.Players.Add(
+                new Player
+                {
+                    Login = "sparring",
+                    Email = "sparring@example.com",
+                    PasswordHash = "x",
+                    IsBot = true,
+                    Activity = 100,
+                }
+            );
+            for (var id = 1; id <= 10; id++)
+            {
+                context.Cards.Add(
+                    new Card
+                    {
+                        Id = id,
+                        Name = $"Card {id}",
+                        Image = $"card-{id}.jpg",
+                        TopValue = 1,
+                        RightValue = 1,
+                        BottomValue = 1,
+                        LeftValue = 1,
+                        Level = id,
+                    }
+                );
+            }
+            await context.SaveChangesAsync();
+            var (service, _) = CreateService(context, random: new FixedRandom(0));
+
+            var match = await service.FindOrCreateBotMatchAsync("argel", [], Now);
+
+            Assert.NotNull(match);
+            Assert.Equal("argel", match.Player1Id);
+            Assert.Equal("sparring", match.Player2Id);
+            Assert.Equal("active", match.Status);
+            // The bot brought a full hand of its own; the human's is still to be picked.
+            Assert.Equal(
+                GameLogicService.HandSize,
+                await context.PlayerHands.CountAsync(hand => hand.PlayerId == "sparring")
+            );
+            Assert.Equal(0, await context.PlayerHands.CountAsync(hand => hand.PlayerId == "argel"));
+        }
+
+        [Fact]
         public async Task WithOnlyDifferentRulesWaiting_StartsItsOwnMatch()
         {
             using var context = CreateContext(Guid.NewGuid().ToString());
@@ -126,7 +173,7 @@ namespace TripleTriadApi.Tests.Services
         }
 
         [Fact]
-        public async Task GivesUpAnEarlierMatchInEitherSeat()
+        public async Task GivesUpAnEarlierMatchInEitherSeat_ButOnlyTellsTheOneWithAnOpponent()
         {
             using var context = CreateContext(Guid.NewGuid().ToString());
             var asPlayerOne = await SeedWaitingMatchAsync(context, "argel", MatchRule.Same);
@@ -140,15 +187,31 @@ namespace TripleTriadApi.Tests.Services
 
             await service.FindOrCreateWaitingMatchAsync("argel", [MatchRule.Same], Now);
 
-            // A player may only ever be in one match, whichever seat they were sitting in — and whoever was waiting on
-            // them is told, so they are not left waiting for a game that will never be played.
+            // A player may only ever be in one match, whichever seat they were sitting in — both rows are given up.
             Assert.Equal("abandoned", (await context.Matches.FindAsync(asPlayerOne.Id))!.Status);
             Assert.Equal("abandoned", (await context.Matches.FindAsync(asPlayerTwo.Id))!.Status);
-            Assert.Equal(2, notifier.Abandoned.Count);
-            Assert.All(
-                notifier.Abandoned,
-                push => Assert.Equal(MatchmakingService.AbandonedByNewSearchReason, push.Reason)
-            );
+
+            // But only the match that had an opponent has anyone to tell: the waiting one's only member is the player
+            // who just gave it up, so a `MatchAbandoned` there would only echo back at them (the flash the bot
+            // fallback used to cause). See `AbandonUnfinishedAsync`.
+            var abandoned = Assert.Single(notifier.Abandoned);
+            Assert.Equal(asPlayerTwo.Id, abandoned.MatchId);
+            Assert.Equal(MatchmakingService.AbandonedByNewSearchReason, abandoned.Reason);
+        }
+
+        [Fact]
+        public async Task AbandoningAWaitingMatch_TellsNobody()
+        {
+            // The reported flash, as a test: the bot fallback abandons the player's own waiting match, and the old
+            // code broadcast `MatchAbandoned` to its group — which the player was still in — so "the other player
+            // started another match" appeared just before their own new game. A waiting match has no opponent.
+            using var context = CreateContext(Guid.NewGuid().ToString());
+            await SeedWaitingMatchAsync(context, "argel", MatchRule.Same);
+            var (service, notifier) = CreateService(context);
+
+            await service.AbandonUnfinishedAsync("argel");
+
+            Assert.Empty(notifier.Abandoned);
         }
 
         [Fact]
@@ -258,6 +321,7 @@ namespace TripleTriadApi.Tests.Services
             return (
                 new MatchmakingService(
                     new GameRepository(context),
+                    new PlayerRepository(context),
                     matchNotifier,
                     context,
                     new GameLogicService(),
@@ -281,7 +345,7 @@ namespace TripleTriadApi.Tests.Services
 
         /// <summary>
         /// Always draws <paramref name="value"/>, clamped into the range each call asks for. Clamping keeps one
-        /// instance safe for a later draw whose pool holds a single element (the CPU hand), so a test can pin the
+        /// instance safe for a later draw whose pool holds a single element (the bot hand), so a test can pin the
         /// opening-turn coin — a draw of 2 — without scripting every draw after it.
         /// </summary>
         private sealed class FixedRandom(int value) : IRandomSource
