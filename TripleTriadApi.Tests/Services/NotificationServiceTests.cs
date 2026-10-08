@@ -84,9 +84,15 @@ namespace TripleTriadApi.Tests.Services
             var page = await service.GetPageAsync(Me, limit: null, beforeId: null);
 
             Assert.Equal(2, page.UnreadCount);
-            Assert.Equal(new[] { newer.Id, older.Id }, page.Entries.Select(entry => entry.Notification.Id));
+            Assert.Equal(
+                new[] { newer.Id, older.Id },
+                page.Entries.Select(entry => entry.Notification.Id)
+            );
             // The actor's avatar travels with the row, so the panel draws what that player's own profile shows.
-            Assert.All(page.Entries, entry => Assert.Equal("avatars/rival.png", entry.ActorAvatarUrl));
+            Assert.All(
+                page.Entries,
+                entry => Assert.Equal("avatars/rival.png", entry.ActorAvatarUrl)
+            );
         }
 
         [Fact]
@@ -96,13 +102,21 @@ namespace TripleTriadApi.Tests.Services
             var service = CreateService(context);
 
             await SeedFriendshipAsync(context, 42, FriendshipStatus.Pending, requestedBy: Rival);
-            var request = await service.CreateAsync(Me, NotificationTypes.FriendRequest, Rival, subjectId: 42);
+            var request = await service.CreateAsync(
+                Me,
+                NotificationTypes.FriendRequest,
+                Rival,
+                subjectId: 42
+            );
 
             var page = await service.GetPageAsync(Me, limit: null, beforeId: null);
 
             // A row per request, so the panel has a friendship to answer… and one it may still answer.
             Assert.Equal("incoming", Assert.Single(page.Entries).FriendshipState);
-            Assert.Equal(NotificationTypes.FriendRequest, Assert.Single(page.Entries).Notification.Type);
+            Assert.Equal(
+                NotificationTypes.FriendRequest,
+                Assert.Single(page.Entries).Notification.Type
+            );
             Assert.Equal(request.Id, Assert.Single(page.Entries).Notification.Id);
         }
 
@@ -130,7 +144,12 @@ namespace TripleTriadApi.Tests.Services
 
             // The state the accept path leaves behind: accepted, and the request it answered already stamped read.
             await SeedFriendshipAsync(context, 42, FriendshipStatus.Accepted, requestedBy: Rival);
-            var request = await service.CreateAsync(Me, NotificationTypes.FriendRequest, Rival, subjectId: 42);
+            var request = await service.CreateAsync(
+                Me,
+                NotificationTypes.FriendRequest,
+                Rival,
+                subjectId: 42
+            );
             request.ReadAt = DateTime.UtcNow;
             await context.SaveChangesAsync();
 
@@ -221,7 +240,12 @@ namespace TripleTriadApi.Tests.Services
 
             for (var index = 0; index < NotificationService.MaxPageSize + 5; index++)
             {
-                await service.CreateAsync(Me, "something_else", $"actor-{index:00}", subjectId: null);
+                await service.CreateAsync(
+                    Me,
+                    "something_else",
+                    $"actor-{index:00}",
+                    subjectId: null
+                );
             }
 
             var page = await service.GetPageAsync(Me, limit: 500, beforeId: null);
@@ -236,7 +260,12 @@ namespace TripleTriadApi.Tests.Services
             using var context = CreateContext();
             var service = CreateService(context);
 
-            var notification = await service.CreateAsync(Me, NotificationTypes.FriendRequest, Rival, 1);
+            var notification = await service.CreateAsync(
+                Me,
+                NotificationTypes.FriendRequest,
+                Rival,
+                1
+            );
 
             // The row exists, but not in *this* inbox — so it reads as absent rather than as forbidden.
             Assert.Null(await service.MarkReadAsync(Rival, notification.Id));
@@ -250,7 +279,12 @@ namespace TripleTriadApi.Tests.Services
             var notifier = new RecordingPlayerNotifier();
             var service = CreateService(context, notifier);
 
-            var notification = await service.CreateAsync(Me, NotificationTypes.FriendRequest, Rival, 1);
+            var notification = await service.CreateAsync(
+                Me,
+                NotificationTypes.FriendRequest,
+                Rival,
+                1
+            );
 
             var unreadCount = await service.MarkReadAsync(Me, notification.Id);
 
@@ -294,10 +328,17 @@ namespace TripleTriadApi.Tests.Services
             // Same recipient, same actor — a different subject must not be touched.
             var other = await service.CreateAsync(Me, NotificationTypes.FriendRequest, Rival, 8);
 
-            var marked = await service.MarkAnsweredAsync(Me, NotificationTypes.FriendRequest, Rival, 7);
+            var marked = await service.MarkAnsweredAsync(
+                Me,
+                NotificationTypes.FriendRequest,
+                Rival,
+                7
+            );
 
             Assert.Equal(1, marked);
-            Assert.NotNull((await context.Notifications.SingleAsync(n => n.Id == target.Id)).ReadAt);
+            Assert.NotNull(
+                (await context.Notifications.SingleAsync(n => n.Id == target.Id)).ReadAt
+            );
             Assert.Null((await context.Notifications.SingleAsync(n => n.Id == other.Id)).ReadAt);
         }
 
@@ -309,7 +350,9 @@ namespace TripleTriadApi.Tests.Services
                 new Repositories.NotificationRepository(context),
                 new Repositories.FriendshipRepository(context),
                 new Repositories.PlayerRepository(context),
-                notifier ?? new RecordingPlayerNotifier()
+                notifier ?? new RecordingPlayerNotifier(),
+                // The page stamps a challenge row from the match it is about (plans/PLAN-027-friend-challenge §3.6).
+                new Repositories.GameRepository(context)
             );
 
         private static TripleTriadContext CreateContext() =>

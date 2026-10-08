@@ -4,6 +4,29 @@ using TripleTriadApi.Repositories;
 namespace TripleTriadApi.Services
 {
     /// <summary>
+    /// What a `match_challenge` notification means to its recipient **now** — the stamp the panel draws its buttons
+    /// from, computed from the match's current status (plans/PLAN-027-friend-challenge/plan.md §3.6), exactly as
+    /// <see cref="FriendshipStates"/> is computed for a friend kind.
+    /// </summary>
+    public static class ChallengeStates
+    {
+        /// <summary>The match is still `pending`: the invitation is the recipient's to accept or refuse.</summary>
+        public const string Pending = "pending";
+
+        /// <summary>The match went `active`: it is being played.</summary>
+        public const string Accepted = "accepted";
+
+        /// <summary>The recipient declined the invitation.</summary>
+        public const string Refused = "refused";
+
+        /// <summary>It was cancelled, superseded, or ran out its twenty minutes.</summary>
+        public const string Expired = "expired";
+
+        /// <summary>The match row is gone. Never expected — but a missing row is not an error.</summary>
+        public const string Gone = "gone";
+    }
+
+    /// <summary>
     /// The one way a notification is written, and the only thing that knows an inbox has a badge
     /// (plans/PLAN-022-notifications-and-friends/plan.md §3.3). Every kind goes through <see cref="CreateAsync"/>, so a
     /// kind added later inherits the row, the read state and the push with no new plumbing.
@@ -24,18 +47,21 @@ namespace TripleTriadApi.Services
         private readonly IFriendshipRepository _friendships;
         private readonly IPlayerRepository _players;
         private readonly IPlayerNotifier _notifier;
+        private readonly IGameRepository _games;
 
         public NotificationService(
             INotificationRepository notifications,
             IFriendshipRepository friendships,
             IPlayerRepository players,
-            IPlayerNotifier notifier
+            IPlayerNotifier notifier,
+            IGameRepository games
         )
         {
             _notifications = notifications;
             _friendships = friendships;
             _players = players;
             _notifier = notifier;
+            _games = games;
         }
 
         /// <summary>
@@ -51,7 +77,12 @@ namespace TripleTriadApi.Services
             string? payload = null
         )
         {
-            var outstanding = await _notifications.FindUnreadAsync(recipientId, type, actorId, subjectId);
+            var outstanding = await _notifications.FindUnreadAsync(
+                recipientId,
+                type,
+                actorId,
+                subjectId
+            );
 
             if (outstanding is not null)
             {
@@ -82,23 +113,32 @@ namespace TripleTriadApi.Services
         /// something that happened — it is simply not listed (<see cref="IsStillListed"/>).
         /// <paramref name="limit"/> of 0 answers the count alone, which is what a badge refresh costs.
         /// </summary>
-        public async Task<NotificationPage> GetPageAsync(string recipientId, int? limit, int? beforeId)
+        public async Task<NotificationPage> GetPageAsync(
+            string recipientId,
+            int? limit,
+            int? beforeId
+        )
         {
             var pageSize = Math.Clamp(limit ?? DefaultPageSize, 0, MaxPageSize);
             var rows =
-                pageSize == 0 ? [] : await _notifications.GetPageAsync(recipientId, pageSize, beforeId);
+                pageSize == 0
+                    ? []
+                    : await _notifications.GetPageAsync(recipientId, pageSize, beforeId);
 
             var unreadCount = await _notifications.CountUnreadAsync(recipientId);
 
             // The friendships the page's friend-kind rows are about, in one query rather than one per row.
-            var friendshipIds = rows
-                .Where(row => row.SubjectId is not null)
+            var friendshipIds = rows.Where(row => row.SubjectId is not null)
                 .Select(row => row.SubjectId!.Value)
                 .Distinct()
                 .ToList();
-            var friendships = (await _friendships.FindByIdsAsync(friendshipIds)).ToDictionary(f => f.Id);
+            var friendships = (await _friendships.FindByIdsAsync(friendshipIds)).ToDictionary(f =>
+                f.Id
+            );
 
             var avatars = new Dictionary<string, string?>(StringComparer.Ordinal);
+            // The matches the page's challenge rows are about, cached across the page's rows.
+            var challengeMatches = new Dictionary<int, Match?>();
             var entries = new List<NotificationEntry>(rows.Count);
 
             foreach (var row in rows)
@@ -125,14 +165,28 @@ namespace TripleTriadApi.Services
                     )
                     : null;
 
-                if (!IsStillListed(row.Type, friendshipState))
+                // A challenge row is stamped from the match it is about, read once per distinct id and cached the same
+                // way the avatars are — a page is a handful of rows.
+                string? challengeState = null;
+                if (row.Type == NotificationTypes.MatchChallenge && row.SubjectId is { } matchId)
                 {
-                    // Answered, declined or withdrawn since: there is nothing left to do about this one, so it leaves
-                    // the inbox rather than sitting there as a line no button can act on.
+                    if (!challengeMatches.TryGetValue(matchId, out var challengeMatch))
+                    {
+                        challengeMatch = await _games.GetMatchByIdAsync(matchId);
+                        challengeMatches[matchId] = challengeMatch;
+                    }
+
+                    challengeState = ChallengeStateFor(challengeMatch);
+                }
+
+                if (!IsStillListed(row.Type, friendshipState, challengeState))
+                {
+                    // Answered, declined, withdrawn or expired since: there is nothing left to do about this one, so it
+                    // leaves the inbox rather than sitting there as a line no button can act on.
                     continue;
                 }
 
-                entries.Add(new NotificationEntry(row, avatarUrl, friendshipState));
+                entries.Add(new NotificationEntry(row, avatarUrl, friendshipState, challengeState));
             }
 
             return new NotificationPage(unreadCount, entries);
@@ -147,8 +201,33 @@ namespace TripleTriadApi.Services
         /// Everything else stays listed, `friend_accepted` included: that is news nobody acts on, and its row is how
         /// the requester learns the answer.
         /// </summary>
-        private static bool IsStillListed(string type, string? friendshipState) =>
-            type != NotificationTypes.FriendRequest || friendshipState == FriendshipStates.Incoming;
+        private static bool IsStillListed(
+            string type,
+            string? friendshipState,
+            string? challengeState
+        ) =>
+            type switch
+            {
+                NotificationTypes.FriendRequest => friendshipState == FriendshipStates.Incoming,
+                // A challenge is listed only while it is still the recipient's to answer (§3.6).
+                NotificationTypes.MatchChallenge => challengeState == ChallengeStates.Pending,
+                _ => true,
+            };
+
+        /// <summary>
+        /// What a challenge notification means right now, from the match's status
+        /// (plans/PLAN-027-friend-challenge/plan.md §3.6). `waiting`/`completed`/`abandoned` all read as expired: none
+        /// of them is an invitation anybody can still answer.
+        /// </summary>
+        private static string ChallengeStateFor(Match? match) =>
+            match?.Status switch
+            {
+                "pending" => ChallengeStates.Pending,
+                "active" => ChallengeStates.Accepted,
+                "refused" => ChallengeStates.Refused,
+                null => ChallengeStates.Gone,
+                _ => ChallengeStates.Expired,
+            };
 
         /// <summary>
         /// Marks one row read, for the recipient it belongs to. Returns the badge's new number, or null when that id
@@ -232,11 +311,15 @@ namespace TripleTriadApi.Services
         public sealed record NotificationEntry(
             Notification Notification,
             string? ActorAvatarUrl,
-            string? FriendshipState
+            string? FriendshipState,
+            string? ChallengeState
         );
 
         /// <summary>A page of the inbox plus the badge's number.</summary>
-        public sealed record NotificationPage(int UnreadCount, IReadOnlyList<NotificationEntry> Entries);
+        public sealed record NotificationPage(
+            int UnreadCount,
+            IReadOnlyList<NotificationEntry> Entries
+        );
 
         /// <summary>What "mark all read" did.</summary>
         public sealed record ReadAllResult(int MarkedRead, int UnreadCount);

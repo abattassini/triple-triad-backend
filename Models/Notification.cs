@@ -12,6 +12,13 @@ namespace TripleTriadApi.Models
 
         /// <summary>The recipient's own request was accepted. Carries the friendship in <see cref="Notification.SubjectId"/>.</summary>
         public const string FriendAccepted = "friend_accepted";
+
+        /// <summary>
+        /// Somebody challenged the recipient to a match. Carries the **match** in <see cref="Notification.SubjectId"/>,
+        /// and is answerable from the panel until that match stops being `pending`
+        /// (plans/PLAN-027-friend-challenge/plan.md §3.6).
+        /// </summary>
+        public const string MatchChallenge = "match_challenge";
     }
 
     /// <summary>

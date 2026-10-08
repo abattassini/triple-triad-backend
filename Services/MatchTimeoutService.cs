@@ -36,6 +36,13 @@ namespace TripleTriadApi.Services
                 DateTime.UtcNow,
                 cancellationToken
             );
+
+            // S5: the invitations nobody answered (plans/PLAN-027-friend-challenge/plan.md §3.2 #4). A pass of its own,
+            // because a `pending` challenge is neither a waiting match nor an active one — and because the write, the
+            // inbox stamping and the push all belong to ChallengeService, so only the narrow seam crosses here.
+            await scope
+                .ServiceProvider.GetRequiredService<IPendingChallenges>()
+                .ExpireTimedOutAsync(DateTime.UtcNow);
         }
 
         /// <summary>
@@ -90,7 +97,12 @@ namespace TripleTriadApi.Services
                     // S2, and only ever within `MatchTimeouts.HandPick` of activation: a hand that was never filed.
                     // (An in-progress match is *ready* — playing a card marks its row used, it does not un-file the
                     // hand — so a half-played game can never land here.)
-                    await AbandonAsync(gameRepository, notifier, match, "the hand was never picked");
+                    await AbandonAsync(
+                        gameRepository,
+                        notifier,
+                        match,
+                        "the hand was never picked"
+                    );
                     continue;
                 }
 

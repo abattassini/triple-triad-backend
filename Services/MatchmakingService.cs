@@ -35,6 +35,7 @@ namespace TripleTriadApi.Services
         TripleTriadContext context,
         GameLogicService gameLogic,
         IRandomSource random,
+        IPendingChallenges pendingChallenges,
         ILogger<MatchmakingService> logger
     )
     {
@@ -85,6 +86,11 @@ namespace TripleTriadApi.Services
                     await notifier.AbandonedAsync(match.Id, AbandonedByNewSearchReason);
                 }
             }
+
+            // One match per player (plans/PLAN-027-friend-challenge/plan.md §13): everything else still holding them
+            // goes — an unfinished match, and any invitation they are in on **either** side. That is what makes "a
+            // player may only ever be in one match" true rather than merely likely, for humans and bots alike.
+            await pendingChallenges.ExpireInvolvingAsync(playerId);
         }
 
         /// <summary>
@@ -174,15 +180,28 @@ namespace TripleTriadApi.Services
                     return null;
                 }
 
+                // One match per player (§13): a bot already seated in another match is not a candidate, however online
+                // it looks. Two humans are serialised by the gate above, but a bot is *chosen from a pool*, so without
+                // this the same bot would be picked for two players and play both — the reported bug.
+                var busy = (await gameRepository.GetOpenLoginsAsync()).ToHashSet(
+                    StringComparer.Ordinal
+                );
+                var free = bots.Where(bot => !busy.Contains(bot.Login)).ToList();
+                if (free.Count == 0)
+                {
+                    return null;
+                }
+
                 // Prefer a bot the presence rule calls online. The ≥3 floor means there normally are some; the
                 // highest-activity bot is the guarantee for the rare bucket where the rolls leave fewer.
-                var infos = bots.Select(bot => new BotRegistry.Bot(bot.Login, bot.Activity)).ToList();
+                var infos = free.Select(bot => new BotRegistry.Bot(bot.Login, bot.Activity))
+                    .ToList();
                 var onlineLogins = BotPresence.OnlineBots(infos, now);
-                var pool = bots.Where(bot => onlineLogins.Contains(bot.Login)).ToList();
+                var pool = free.Where(bot => onlineLogins.Contains(bot.Login)).ToList();
                 var bot =
                     pool.Count > 0
                         ? pool[random.Next(pool.Count)]
-                        : bots.OrderByDescending(candidate => candidate.Activity).First();
+                        : free.OrderByDescending(candidate => candidate.Activity).First();
 
                 var match = await gameRepository.CreateMatchAsync(
                     playerId,

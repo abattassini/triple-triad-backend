@@ -59,6 +59,9 @@ namespace TripleTriadApi.Controllers
                                 // none/requested/incoming/friends for the two that are. The panel acts on this rather
                                 // than on the row's age, so a request answered elsewhere offers no button.
                                 friendshipState = entry.FriendshipState,
+                                // What a challenge row means *now* — pending while it is still the recipient's to
+                                // answer — and null for the friend kinds (plans/PLAN-027-friend-challenge §3.6).
+                                challengeState = entry.ChallengeState,
                                 subjectId = entry.Notification.SubjectId,
                                 createdAt = entry.Notification.CreatedAt,
                                 readAt = entry.Notification.ReadAt,

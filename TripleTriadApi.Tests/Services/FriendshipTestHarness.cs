@@ -41,7 +41,36 @@ namespace TripleTriadApi.Tests.Services
                 new NotificationRepository(context),
                 new FriendshipRepository(context),
                 new PlayerRepository(context),
-                notifier ?? new RecordingPlayerNotifier()
+                notifier ?? new RecordingPlayerNotifier(),
+                // The page stamps a challenge row from the match it is about (plans/PLAN-027-friend-challenge §3.6).
+                new GameRepository(context)
             );
+
+        /// <summary>
+        /// The challenge graph over the same in-memory context, for the tests that drive sending, answering and
+        /// expiring an invitation. One recorder is shared by the inbox and the challenge pushes, so a test can pass its
+        /// own and read both back (plans/PLAN-027-friend-challenge/plan.md §3.5).
+        /// </summary>
+        public static ChallengeService CreateChallengeService(
+            TripleTriadContext context,
+            IPlayerNotifier? notifier = null,
+            IPlayerPresence? presence = null,
+            IRandomSource? random = null
+        )
+        {
+            var recorder = notifier ?? new RecordingPlayerNotifier();
+            var presenceState = presence ?? new ConnectionPresence();
+
+            return new ChallengeService(
+                new GameRepository(context),
+                new PlayerRepository(context),
+                presenceState,
+                CreateFriendService(context, recorder, presenceState),
+                CreateNotificationService(context, recorder),
+                recorder,
+                new GameLogicService(),
+                random ?? new SystemRandomSource()
+            );
+        }
     }
 }

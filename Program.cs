@@ -111,6 +111,13 @@ builder.Services.AddScoped<IPlayerNotifier, SignalRPlayerNotifier>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<FriendService>();
 
+// Challenging a friend (see plans/PLAN-027-friend-challenge/plan.md): one service, plus the narrow seam its two other
+// writers (matchmaking, the timeout sweep) use, so neither has to take the whole challenge graph.
+builder.Services.AddScoped<ChallengeService>();
+builder.Services.AddScoped<IPendingChallenges>(services =>
+    services.GetRequiredService<ChallengeService>()
+);
+
 // Presence (see plans/PLAN-023-social-friends-list/plan.md §3.1): the registry is a **singleton**, because the state it
 // holds is this process's own sockets and would be meaningless per-request; the service that announces changes is
 // scoped, like every other service that reaches the database.
@@ -127,7 +134,9 @@ builder.Services.AddScoped<PresenceService>();
 // Recovery configuration, bound through the options system rather than read from environment variables directly.
 // A service reading the environment while Program.cs reads configuration is precisely the divergence that already
 // caused a 401 bug once (plans/PLAN-010-welcome-onboarding/plan.md §326); one source of truth is the fix.
-builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.SectionName));
+builder.Services.Configure<EmailOptions>(
+    builder.Configuration.GetSection(EmailOptions.SectionName)
+);
 builder.Services.Configure<PasswordResetOptions>(
     builder.Configuration.GetSection(PasswordResetOptions.SectionName)
 );
@@ -144,7 +153,8 @@ builder.Services.Configure<AppOptions>(builder.Configuration.GetSection(AppOptio
 // SMTP here means "the settings in Email:*", which covers the current dedicated Gmail account and any paid relay
 // (Resend, Brevo, SendGrid and Mailgun all expose SMTP relays). That switch is configuration, not code.
 var emailConfigured =
-    builder.Configuration.GetSection(EmailOptions.SectionName).Get<EmailOptions>()?.IsConfigured ?? false;
+    builder.Configuration.GetSection(EmailOptions.SectionName).Get<EmailOptions>()?.IsConfigured
+    ?? false;
 
 if (builder.Environment.IsDevelopment() && !emailConfigured)
 {
@@ -187,13 +197,12 @@ builder.Services.AddRateLimiter(limiter =>
 
             return RateLimitPartition.GetFixedWindowLimiter(
                 $"password-reset:{address}",
-                _ =>
-                    new FixedWindowRateLimiterOptions
-                    {
-                        PermitLimit = resetAttemptsPerAddressPerHour,
-                        Window = TimeSpan.FromHours(1),
-                        QueueLimit = 0,
-                    }
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = resetAttemptsPerAddressPerHour,
+                    Window = TimeSpan.FromHours(1),
+                    QueueLimit = 0,
+                }
             );
         }
     );
@@ -208,13 +217,12 @@ builder.Services.AddRateLimiter(limiter =>
 
             return RateLimitPartition.GetFixedWindowLimiter(
                 $"friend-request:{address}",
-                _ =>
-                    new FixedWindowRateLimiterOptions
-                    {
-                        PermitLimit = friendRequestsPerAddressPerHour,
-                        Window = TimeSpan.FromHours(1),
-                        QueueLimit = 0,
-                    }
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = friendRequestsPerAddressPerHour,
+                    Window = TimeSpan.FromHours(1),
+                    QueueLimit = 0,
+                }
             );
         }
     );
@@ -292,7 +300,8 @@ else
                     var versionClaim = context.Principal?.FindFirst("session_version")?.Value;
                     var tokenVersion = int.TryParse(versionClaim, out var parsed) ? parsed : 0;
 
-                    var players = context.HttpContext.RequestServices.GetRequiredService<IPlayerRepository>();
+                    var players =
+                        context.HttpContext.RequestServices.GetRequiredService<IPlayerRepository>();
                     var player = await players.FindByLoginAsync(login);
 
                     if (player is null || player.SessionVersion != tokenVersion)
@@ -316,7 +325,9 @@ if (!emailConfigured && builder.Environment.IsDevelopment())
 else if (!emailConfigured)
 {
     Console.WriteLine("⚠️  Email is not configured — password recovery cannot send codes.");
-    Console.WriteLine("   Set Email__Smtp__Host / __Port / __User / __Password and Email__FromAddress.");
+    Console.WriteLine(
+        "   Set Email__Smtp__Host / __Port / __User / __Password and Email__FromAddress."
+    );
 }
 else
 {

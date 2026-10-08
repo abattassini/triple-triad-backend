@@ -15,6 +15,13 @@ namespace TripleTriadApi.Services
         public static readonly TimeSpan HandPick = TimeSpan.FromMinutes(2);
         public static readonly TimeSpan TurnIdle = TimeSpan.FromMinutes(3);
 
+        /// <summary>
+        /// How long a **challenge** waits for an answer before it expires, whoever is waiting on it
+        /// (plans/PLAN-027-friend-challenge/plan.md §3.2 #4). Longer than <see cref="WaitingForOpponent"/> on purpose:
+        /// an invitation is meant to be answered when the challenged player is out of their current match.
+        /// </summary>
+        public static readonly TimeSpan PendingChallenge = TimeSpan.FromMinutes(20);
+
         /// <summary>How often the sweep looks for expired matches — it also runs once at startup.</summary>
         public static readonly TimeSpan SweepInterval = TimeSpan.FromSeconds(20);
 
@@ -23,5 +30,8 @@ namespace TripleTriadApi.Services
         public static DateTime HandPickCutoff(DateTime now) => now - HandPick;
 
         public static DateTime TurnIdleCutoff(DateTime now) => now - TurnIdle;
+
+        /// <summary>When a challenge created before this instant has expired.</summary>
+        public static DateTime PendingChallengeCutoff(DateTime now) => now - PendingChallenge;
     }
 }

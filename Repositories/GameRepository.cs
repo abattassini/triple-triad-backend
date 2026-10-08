@@ -25,6 +25,14 @@ namespace TripleTriadApi.Repositories
         Task<List<Match>> GetUnfinishedMatchesForPlayerAsync(string playerId);
 
         /// <summary>
+        /// The logins holding a match that is still **open** — `waiting`, `active` or `pending` — in either seat, each
+        /// once (plans/PLAN-027-friend-challenge/plan.md §13). It is what keeps a second match from being seated on a
+        /// player who already has one: a pool of candidates is chosen from, so nothing else stops the same bot being
+        /// picked twice.
+        /// </summary>
+        Task<List<string>> GetOpenLoginsAsync();
+
+        /// <summary>
         /// Starts a match. <paramref name="startingPlayer"/> is the seat that opens it — drawn at random by the
         /// caller once both seats are known, rather than assumed to be player 1 (PLAN-024).
         /// </summary>
@@ -48,6 +56,28 @@ namespace TripleTriadApi.Repositories
         );
         Task UpdateCardPlacementOwnershipAsync(List<CardPlacement> placements);
         Task<List<Match>> GetWaitingMatchesAsync();
+
+        /// <summary>
+        /// Creates a challenge: a match whose second seat is the challenged player, born **`pending`** (awaiting their
+        /// answer) rather than `active` (plans/PLAN-027-friend-challenge/plan.md §3.4). The turn is a placeholder —
+        /// the real opener is drawn when the challenge is accepted.
+        /// </summary>
+        Task<Match> CreateChallengeMatchAsync(
+            string challengerId,
+            string challengedId,
+            DateTime now
+        );
+
+        /// <summary>
+        /// The `pending` challenges this player is in, **either seat** — the challenger's own (to supersede them) and
+        /// both sides' (when a player signs out) (plans/PLAN-027-friend-challenge/plan.md §3.2 #5/#6).
+        /// </summary>
+        Task<List<Match>> GetPendingChallengesForAsync(string login);
+
+        /// <summary>
+        /// The `pending` challenges created before <paramref name="cutoff"/> — what the sweep expires (§3.2 #4).
+        /// </summary>
+        Task<List<Match>> GetExpiredPendingChallengesAsync(DateTime cutoff);
 
         /// <summary>
         /// Seats <paramref name="playerId"/> in a match that is still waiting, but only if it is genuinely still
@@ -184,6 +214,22 @@ namespace TripleTriadApi.Repositories
                 )
                 .OrderBy(m => m.CreatedAt)
                 .ToListAsync();
+        }
+
+        public async Task<List<string>> GetOpenLoginsAsync()
+        {
+            var rows = await _context
+                .Matches.Where(m =>
+                    m.Status == "waiting" || m.Status == "active" || m.Status == "pending"
+                )
+                .Select(m => new { m.Player1Id, m.Player2Id })
+                .ToListAsync();
+
+            // One entry per player whatever seat they hold, and a waiting match's empty second seat is dropped.
+            return rows.SelectMany(row => new[] { row.Player1Id, row.Player2Id })
+                .Where(login => !string.IsNullOrEmpty(login))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
         }
 
         public async Task<Match> CreateMatchAsync(
@@ -367,6 +413,50 @@ namespace TripleTriadApi.Repositories
         {
             return await _context
                 .Matches.Where(m => m.Status == "waiting" && string.IsNullOrEmpty(m.Player2Id))
+                .OrderBy(m => m.CreatedAt)
+                .ToListAsync();
+        }
+
+        public async Task<Match> CreateChallengeMatchAsync(
+            string challengerId,
+            string challengedId,
+            DateTime now
+        )
+        {
+            var match = new Match
+            {
+                Player1Id = challengerId,
+                Player2Id = challengedId,
+                // A placeholder, exactly as a waiting match carries one: the real opener is drawn at acceptance
+                // (PLAN-024's rule), which is the moment both seats are known to be playing.
+                CurrentPlayerTurn = challengerId,
+                Status = "pending",
+                Player1Score = 5,
+                Player2Score = 5,
+                Rules = [],
+                CreatedAt = now,
+            };
+
+            _context.Matches.Add(match);
+            await _context.SaveChangesAsync();
+
+            return match;
+        }
+
+        public async Task<List<Match>> GetPendingChallengesForAsync(string login)
+        {
+            return await _context
+                .Matches.Where(m =>
+                    m.Status == "pending" && (m.Player1Id == login || m.Player2Id == login)
+                )
+                .OrderBy(m => m.CreatedAt)
+                .ToListAsync();
+        }
+
+        public async Task<List<Match>> GetExpiredPendingChallengesAsync(DateTime cutoff)
+        {
+            return await _context
+                .Matches.Where(m => m.Status == "pending" && m.CreatedAt <= cutoff)
                 .OrderBy(m => m.CreatedAt)
                 .ToListAsync();
         }

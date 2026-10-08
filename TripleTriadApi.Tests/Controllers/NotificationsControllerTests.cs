@@ -59,7 +59,10 @@ namespace TripleTriadApi.Tests.Controllers
 
             var oldest = rows[1];
             Assert.Equal(waiting.Id, oldest.GetProperty("id").GetInt32());
-            Assert.Equal(FriendshipStates.Incoming, oldest.GetProperty("friendshipState").GetString());
+            Assert.Equal(
+                FriendshipStates.Incoming,
+                oldest.GetProperty("friendshipState").GetString()
+            );
         }
 
         [Fact]
@@ -135,7 +138,12 @@ namespace TripleTriadApi.Tests.Controllers
         public async Task MarkRead_AnswersTheNewCount()
         {
             using var context = CreateContext();
-            var notification = await NotifyAsync(context, NotificationTypes.FriendRequest, Rival, 1);
+            var notification = await NotifyAsync(
+                context,
+                NotificationTypes.FriendRequest,
+                Rival,
+                1
+            );
 
             var result = await CreateController(context, Me).MarkRead(notification.Id);
 
@@ -150,7 +158,12 @@ namespace TripleTriadApi.Tests.Controllers
         public async Task MarkRead_ForSomeoneElsesNotification_Is404()
         {
             using var context = CreateContext();
-            var notification = await NotifyAsync(context, NotificationTypes.FriendRequest, Rival, 1);
+            var notification = await NotifyAsync(
+                context,
+                NotificationTypes.FriendRequest,
+                Rival,
+                1
+            );
 
             // The row is in *my* inbox; the other player may not reach it, and learns nothing by trying.
             var result = await CreateController(context, Rival).MarkRead(notification.Id);
@@ -173,7 +186,9 @@ namespace TripleTriadApi.Tests.Controllers
 
             Assert.Equal(2, json.RootElement.GetProperty("markedRead").GetInt32());
             Assert.Equal(0, json.RootElement.GetProperty("unreadCount").GetInt32());
-            Assert.Empty(await context.Notifications.Where(row => row.ReadAt == null).ToListAsync());
+            Assert.Empty(
+                await context.Notifications.Where(row => row.ReadAt == null).ToListAsync()
+            );
         }
 
         [Theory]
@@ -183,7 +198,12 @@ namespace TripleTriadApi.Tests.Controllers
         public async Task EveryInboxEndpoint_WithoutALogin_Is401(string endpoint)
         {
             using var context = CreateContext();
-            var notification = await NotifyAsync(context, NotificationTypes.FriendRequest, Rival, 1);
+            var notification = await NotifyAsync(
+                context,
+                NotificationTypes.FriendRequest,
+                Rival,
+                1
+            );
             var controller = CreateController(context, login: null);
 
             var result = endpoint switch
@@ -211,7 +231,8 @@ namespace TripleTriadApi.Tests.Controllers
                 new NotificationRepository(context),
                 new FriendshipRepository(context),
                 new PlayerRepository(context),
-                new RecordingPlayerNotifier()
+                new RecordingPlayerNotifier(),
+                new GameRepository(context)
             );
 
             return await service.CreateAsync(Me, type, actorId, subjectId);
@@ -228,7 +249,8 @@ namespace TripleTriadApi.Tests.Controllers
                     new NotificationRepository(context),
                     new FriendshipRepository(context),
                     new PlayerRepository(context),
-                    new RecordingPlayerNotifier()
+                    new RecordingPlayerNotifier(),
+                    new GameRepository(context)
                 )
             );
 

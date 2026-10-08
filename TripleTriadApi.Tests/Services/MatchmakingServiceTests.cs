@@ -140,6 +140,43 @@ namespace TripleTriadApi.Tests.Services
         }
 
         [Fact]
+        public async Task FindOrCreateBotMatch_WhenTheBotIsAlreadyInAMatch_SeatsNobody()
+        {
+            using var context = CreateContext(Guid.NewGuid().ToString());
+            context.Players.Add(
+                new Player
+                {
+                    Login = "sparring",
+                    Email = "sparring@example.com",
+                    PasswordHash = "x",
+                    IsBot = true,
+                    Activity = 100,
+                }
+            );
+            // The only bot is already playing somebody else — the double-booking that was reported.
+            context.Matches.Add(
+                new Match
+                {
+                    Player1Id = "somebody",
+                    Player2Id = "sparring",
+                    CurrentPlayerTurn = "somebody",
+                    Status = "active",
+                    ActivatedAt = Now,
+                    Player1Score = 5,
+                    Player2Score = 5,
+                }
+            );
+            await context.SaveChangesAsync();
+            var (service, _) = CreateService(context, random: new FixedRandom(0));
+
+            var match = await service.FindOrCreateBotMatchAsync("argel", [], Now);
+
+            // One match per player: the fallback gives up rather than seating a bot that is already playing.
+            Assert.Null(match);
+            Assert.Equal(1, await context.Matches.CountAsync());
+        }
+
+        [Fact]
         public async Task WithOnlyDifferentRulesWaiting_StartsItsOwnMatch()
         {
             using var context = CreateContext(Guid.NewGuid().ToString());
@@ -326,6 +363,7 @@ namespace TripleTriadApi.Tests.Services
                     context,
                     new GameLogicService(),
                     random ?? new SystemRandomSource(),
+                    new RecordingPendingChallenges(),
                     NullLogger<MatchmakingService>.Instance
                 ),
                 matchNotifier
@@ -336,7 +374,10 @@ namespace TripleTriadApi.Tests.Services
         /// A context over a named in-memory database. The name (and root) is how several contexts see one store, which
         /// is what lets the concurrency tests reproduce two requests at once.
         /// </summary>
-        private static TripleTriadContext CreateContext(string databaseName, InMemoryDatabaseRoot? root = null) =>
+        private static TripleTriadContext CreateContext(
+            string databaseName,
+            InMemoryDatabaseRoot? root = null
+        ) =>
             new(
                 new DbContextOptionsBuilder<TripleTriadContext>()
                     .UseInMemoryDatabase(databaseName, root)

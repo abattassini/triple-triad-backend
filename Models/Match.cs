@@ -6,7 +6,12 @@ namespace TripleTriadApi.Models
         public string Player1Id { get; set; } = string.Empty;
         public string Player2Id { get; set; } = string.Empty;
         public string? CurrentPlayerTurn { get; set; }
-        public string Status { get; set; } = "waiting"; // waiting, active, completed, abandoned
+
+        // The match's lifecycle: `waiting` (created, with no second seat yet), `pending` (a challenge awaiting the
+        // challenged player's answer — plans/PLAN-027-friend-challenge/plan.md), `active` (both seated, being played),
+        // `refused` (the challenged declined a challenge), `abandoned` (given up: a timeout, a cancelled search, or a
+        // challenge that was cancelled, superseded or expired) and `completed` (played out or forfeited).
+        public string Status { get; set; } = "waiting";
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime? CompletedAt { get; set; }
 

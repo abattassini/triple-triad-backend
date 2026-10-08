@@ -10,6 +10,7 @@ using TripleTriadApi.Data;
 using TripleTriadApi.Models;
 using TripleTriadApi.Repositories;
 using TripleTriadApi.Services;
+using TripleTriadApi.Tests.Services;
 
 namespace TripleTriadApi.Tests.Controllers
 {
@@ -98,7 +99,10 @@ namespace TripleTriadApi.Tests.Controllers
             var root = json.RootElement;
 
             Assert.Equal("waiting", root.GetProperty("match").GetProperty("Status").GetString());
-            Assert.Equal(string.Empty, root.GetProperty("match").GetProperty("Player2Id").GetString());
+            Assert.Equal(
+                string.Empty,
+                root.GetProperty("match").GetProperty("Player2Id").GetString()
+            );
 
             // No hand at all: it arrives later through POST match/{id}/hand.
             Assert.Equal(0, root.GetProperty("playerHand").GetArrayLength());
@@ -119,7 +123,10 @@ namespace TripleTriadApi.Tests.Controllers
             var root = json.RootElement;
 
             Assert.Equal("waiting", root.GetProperty("match").GetProperty("Status").GetString());
-            Assert.Equal(GameLogicService.HandSize, root.GetProperty("playerHand").GetArrayLength());
+            Assert.Equal(
+                GameLogicService.HandSize,
+                root.GetProperty("playerHand").GetArrayLength()
+            );
             Assert.Equal(
                 GameLogicService.HandSize,
                 await context.PlayerHands.CountAsync(hand => hand.PlayerId == PlayerLogin)
@@ -227,7 +234,10 @@ namespace TripleTriadApi.Tests.Controllers
 
             // The opponent is a real bot row, seated as player 2, and only the bot has a hand so far.
             Assert.Equal("active", root.GetProperty("match").GetProperty("Status").GetString());
-            Assert.Equal(TestBots.Login, root.GetProperty("match").GetProperty("Player2Id").GetString());
+            Assert.Equal(
+                TestBots.Login,
+                root.GetProperty("match").GetProperty("Player2Id").GetString()
+            );
             Assert.Equal(0, root.GetProperty("playerHand").GetArrayLength());
             Assert.Equal(
                 GameLogicService.HandSize,
@@ -241,7 +251,9 @@ namespace TripleTriadApi.Tests.Controllers
             // Nobody is ready until the human picks, so the match is not activated — which is what keeps a bot that
             // drew the opening turn from moving over the SelectHand screen.
             Assert.False((await ReadStateAsync(controller, matchId)).HandsReady);
-            Assert.Null((await context.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId)).ActivatedAt);
+            Assert.Null(
+                (await context.Matches.AsNoTracking().SingleAsync(m => m.Id == matchId)).ActivatedAt
+            );
 
             await controller.SetHand(matchId, new SetHandRequest { CardIds = FirstHand });
 
@@ -448,7 +460,10 @@ namespace TripleTriadApi.Tests.Controllers
             var root = json.RootElement;
 
             Assert.Equal("active", root.GetProperty("match").GetProperty("Status").GetString());
-            Assert.Equal(GameLogicService.HandSize, root.GetProperty("playerHand").GetArrayLength());
+            Assert.Equal(
+                GameLogicService.HandSize,
+                root.GetProperty("playerHand").GetArrayLength()
+            );
             Assert.Equal(
                 GameLogicService.HandSize,
                 await context.PlayerHands.CountAsync(hand => hand.PlayerId == OpponentLogin)
@@ -981,6 +996,7 @@ namespace TripleTriadApi.Tests.Controllers
                     context,
                     gameLogic,
                     rng,
+                    new RecordingPendingChallenges(),
                     NullLogger<MatchmakingService>.Instance
                 )
             );

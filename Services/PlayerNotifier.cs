@@ -25,6 +25,28 @@ namespace TripleTriadApi.Services
         /// than a notifier of its own.
         /// </summary>
         Task FriendPresenceChangedAsync(string recipientId, string login, bool online);
+
+        /// <summary>
+        /// Somebody challenged the recipient to a match — the hint that opens the challenge dialog over whatever they
+        /// are doing (plans/PLAN-027-friend-challenge/plan.md §3.9). Sent only when the challenged player is **free**:
+        /// a player already in a match learns about the invitation from their inbox instead.
+        /// </summary>
+        Task ChallengeReceivedAsync(string recipientId, int matchId, string challenger);
+
+        /// <summary>The recipient's outgoing challenge was accepted: the match is on, and both sides pick a hand.</summary>
+        Task ChallengeAcceptedAsync(string recipientId, int matchId);
+
+        /// <summary>The recipient's outgoing challenge was refused — the match's status is `refused`.</summary>
+        Task ChallengeRefusedAsync(string recipientId, int matchId);
+
+        /// <summary>The recipient's incoming challenge was withdrawn by the challenger.</summary>
+        Task ChallengeCancelledAsync(string recipientId, int matchId);
+
+        /// <summary>
+        /// A pending challenge the recipient is in ended on its own — the twenty-minute window, or a sign-out
+        /// (§3.2 #4/#5). Both seats are told; whoever is not connected simply hears nothing.
+        /// </summary>
+        Task ChallengeExpiredAsync(string recipientId, int matchId);
     }
 
     public class SignalRPlayerNotifier(IHubContext<GameHub> hub) : IPlayerNotifier
@@ -40,6 +62,27 @@ namespace TripleTriadApi.Services
             _hub
                 .Clients.Group(GroupOf(recipientId))
                 .SendAsync("FriendPresenceChanged", new { login, online });
+
+        public Task ChallengeReceivedAsync(string recipientId, int matchId, string challenger) =>
+            _hub
+                .Clients.Group(GroupOf(recipientId))
+                .SendAsync("ChallengeReceived", new { matchId, challenger });
+
+        public Task ChallengeAcceptedAsync(string recipientId, int matchId) =>
+            _hub
+                .Clients.Group(GroupOf(recipientId))
+                .SendAsync("ChallengeAccepted", new { matchId });
+
+        public Task ChallengeRefusedAsync(string recipientId, int matchId) =>
+            _hub.Clients.Group(GroupOf(recipientId)).SendAsync("ChallengeRefused", new { matchId });
+
+        public Task ChallengeCancelledAsync(string recipientId, int matchId) =>
+            _hub
+                .Clients.Group(GroupOf(recipientId))
+                .SendAsync("ChallengeCancelled", new { matchId });
+
+        public Task ChallengeExpiredAsync(string recipientId, int matchId) =>
+            _hub.Clients.Group(GroupOf(recipientId)).SendAsync("ChallengeExpired", new { matchId });
 
         /// <summary>
         /// The group a player's own connections join when they subscribe, named here rather than in the hub so the hub

@@ -14,12 +14,16 @@ namespace TripleTriadApi.Tests.Services
     {
         private readonly List<Push> _pushes = [];
         private readonly List<PresencePush> _presencePushes = [];
+        private readonly List<ChallengePush> _challengePushes = [];
 
         /// <summary>Every inbox push, oldest first.</summary>
         public IReadOnlyList<Push> Pushes => _pushes;
 
         /// <summary>Every presence push, oldest first.</summary>
         public IReadOnlyList<PresencePush> PresencePushes => _presencePushes;
+
+        /// <summary>Every challenge push, oldest first (plans/PLAN-027-friend-challenge/plan.md).</summary>
+        public IReadOnlyList<ChallengePush> ChallengePushes => _challengePushes;
 
         public Task NotificationsChangedAsync(string recipientId, int unreadCount)
         {
@@ -33,6 +37,36 @@ namespace TripleTriadApi.Tests.Services
             return Task.CompletedTask;
         }
 
+        public Task ChallengeReceivedAsync(string recipientId, int matchId, string challenger)
+        {
+            _challengePushes.Add(new ChallengePush(recipientId, "received", matchId, challenger));
+            return Task.CompletedTask;
+        }
+
+        public Task ChallengeAcceptedAsync(string recipientId, int matchId)
+        {
+            _challengePushes.Add(new ChallengePush(recipientId, "accepted", matchId, null));
+            return Task.CompletedTask;
+        }
+
+        public Task ChallengeRefusedAsync(string recipientId, int matchId)
+        {
+            _challengePushes.Add(new ChallengePush(recipientId, "refused", matchId, null));
+            return Task.CompletedTask;
+        }
+
+        public Task ChallengeCancelledAsync(string recipientId, int matchId)
+        {
+            _challengePushes.Add(new ChallengePush(recipientId, "cancelled", matchId, null));
+            return Task.CompletedTask;
+        }
+
+        public Task ChallengeExpiredAsync(string recipientId, int matchId)
+        {
+            _challengePushes.Add(new ChallengePush(recipientId, "expired", matchId, null));
+            return Task.CompletedTask;
+        }
+
         /// <summary>The inbox pushes one player received, in order.</summary>
         public List<Push> For(string recipientId) =>
             _pushes.Where(push => push.RecipientId == recipientId).ToList();
@@ -41,8 +75,20 @@ namespace TripleTriadApi.Tests.Services
         public List<PresencePush> PresenceFor(string recipientId) =>
             _presencePushes.Where(push => push.RecipientId == recipientId).ToList();
 
+        /// <summary>The challenge pushes one player received, in order.</summary>
+        public List<ChallengePush> ChallengesFor(string recipientId) =>
+            _challengePushes.Where(push => push.RecipientId == recipientId).ToList();
+
         public sealed record Push(string RecipientId, int UnreadCount);
 
         public sealed record PresencePush(string RecipientId, string Login, bool Online);
+
+        /// <summary>One challenge hint: which kind, which match, and (for `received`) who sent it.</summary>
+        public sealed record ChallengePush(
+            string RecipientId,
+            string Kind,
+            int MatchId,
+            string? Challenger
+        );
     }
 }
