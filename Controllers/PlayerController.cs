@@ -27,6 +27,25 @@ namespace TripleTriadApi.Controllers
         private readonly FriendService _friendService;
         private readonly IPlayerPresence _presence;
 
+        /// <summary>The shortest query the Social lookup answers (plans/PLAN-026-player-search-and-online-page/plan.md §3.1).</summary>
+        private const int MinimumSearchLength = 1;
+
+        /// <summary>How many search hits the lookup returns at most.</summary>
+        private const int MaxSearchResults = 20;
+
+        /// <summary>
+        /// The logins allowed to read the online roster (<c>GET api/player/online</c>) — a diagnostics view the request
+        /// keeps to the two operators (plans/PLAN-026-player-search-and-online-page/plan.md §5 D5). Kept in step with
+        /// the client's <c>OPERATOR_LOGINS</c> (<c>src/App.tsx</c>): the client guard is the redirect, this is the rule.
+        /// </summary>
+        private static readonly HashSet<string> OperatorLogins = new(
+            StringComparer.OrdinalIgnoreCase
+        )
+        {
+            "batta",
+            "argel",
+        };
+
         public PlayerController(
             IPlayerRepository playerRepository,
             IPlayerCardRepository playerCardRepository,
@@ -159,7 +178,9 @@ namespace TripleTriadApi.Controllers
         /// </summary>
         [HttpPost("forgot-password")]
         [EnableRateLimiting(PasswordResetOptions.RateLimitPolicyName)]
-        public async Task<ActionResult<object>> ForgotPassword([FromBody] ForgotPasswordRequest request)
+        public async Task<ActionResult<object>> ForgotPassword(
+            [FromBody] ForgotPasswordRequest request
+        )
         {
             try
             {
@@ -177,7 +198,10 @@ namespace TripleTriadApi.Controllers
                 }
 
                 return Accepted(
-                    new { message = "If that email belongs to an account, a reset code is on its way." }
+                    new
+                    {
+                        message = "If that email belongs to an account, a reset code is on its way.",
+                    }
                 );
             }
             catch (Exception ex)
@@ -201,7 +225,9 @@ namespace TripleTriadApi.Controllers
         /// </summary>
         [HttpPost("reset-password")]
         [EnableRateLimiting(PasswordResetOptions.RateLimitPolicyName)]
-        public async Task<ActionResult<object>> ResetPassword([FromBody] ResetPasswordRequest request)
+        public async Task<ActionResult<object>> ResetPassword(
+            [FromBody] ResetPasswordRequest request
+        )
         {
             try
             {
@@ -383,6 +409,110 @@ namespace TripleTriadApi.Controllers
                 }
 
                 return Ok(await ToPublicProfileAsync(player, requester));
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// The Social page's player lookup: up to <see cref="MaxSearchResults"/> players whose login contains the query,
+        /// case-insensitively, bots included — a bot is an ordinary row and is matched like anyone.
+        ///
+        /// The caller is never in the answer: you cannot befriend yourself, so a hit on your own login would only offer
+        /// a button the server refuses. A query shorter than <see cref="MinimumSearchLength"/> answers an empty list
+        /// without touching the database, so an empty box can never ask for the whole table
+        /// (plans/PLAN-026-player-search-and-online-page/plan.md §3.1).
+        /// </summary>
+        [Authorize]
+        [HttpGet("search")]
+        public async Task<ActionResult<object>> Search(string? q)
+        {
+            try
+            {
+                var requester = GetCurrentLogin();
+                if (string.IsNullOrEmpty(requester))
+                {
+                    return Unauthorized(new { error = "User not authenticated" });
+                }
+
+                var term = q?.Trim() ?? string.Empty;
+                if (term.Length < MinimumSearchLength)
+                {
+                    return Ok(new { players = Array.Empty<object>() });
+                }
+
+                // Ask for one extra row so that dropping the caller (below) cannot cost us the last real result.
+                var matches = await _playerRepository.SearchByLoginsAsync(
+                    term,
+                    MaxSearchResults + 1
+                );
+
+                return Ok(
+                    new
+                    {
+                        players = matches
+                            .Where(player =>
+                                !string.Equals(player.Login, requester, StringComparison.Ordinal)
+                            )
+                            .Take(MaxSearchResults)
+                            .Select(player => new
+                            {
+                                login = player.Login,
+                                avatarUrl = player.AvatarUrl,
+                                isBot = player.IsBot,
+                                online = _presence.IsOnline(player.Login),
+                            }),
+                    }
+                );
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Everyone online right now — the humans holding a live hub connection and the bots the emulated presence
+        /// reports — for the operators' roster page (plans/PLAN-026-player-search-and-online-page/plan.md §3.2). A
+        /// read-only view, and one behind the operator allowlist: anyone else gets a 403, whatever the client guard does.
+        /// </summary>
+        [Authorize]
+        [HttpGet("online")]
+        public async Task<ActionResult<object>> Online()
+        {
+            try
+            {
+                var requester = GetCurrentLogin();
+                if (string.IsNullOrEmpty(requester))
+                {
+                    return Unauthorized(new { error = "User not authenticated" });
+                }
+
+                if (!OperatorLogins.Contains(requester))
+                {
+                    return StatusCode(
+                        403,
+                        new { error = "You are not allowed to view the online roster." }
+                    );
+                }
+
+                var players = await _playerRepository.FindByLoginsAsync(_presence.OnlineLogins());
+
+                return Ok(
+                    new
+                    {
+                        players = players
+                            .OrderBy(player => player.Login, StringComparer.Ordinal)
+                            .Select(player => new
+                            {
+                                login = player.Login,
+                                avatarUrl = player.AvatarUrl,
+                                isBot = player.IsBot,
+                            }),
+                    }
+                );
             }
             catch (Exception ex)
             {

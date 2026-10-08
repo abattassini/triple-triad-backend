@@ -33,6 +33,15 @@ namespace TripleTriadApi.Repositories
         /// tiny, so this is the whole set, never a page.
         /// </summary>
         Task<List<Player>> GetBotsAsync();
+
+        /// <summary>
+        /// Players whose login contains <paramref name="term"/>, case-insensitively, ordered by login and capped at
+        /// <paramref name="limit"/> — the Social page's player lookup
+        /// (plans/PLAN-026-player-search-and-online-page/plan.md §3.1). A bot is an ordinary row, so it is matched like
+        /// anyone. Case folding happens on the client value so the comparison translates to
+        /// <c>lower(login) LIKE '%…%'</c> on PostgreSQL and still evaluates under EF InMemory.
+        /// </summary>
+        Task<List<Player>> SearchByLoginsAsync(string term, int limit);
     }
 
     public class PlayerRepository(TripleTriadContext context) : IPlayerRepository
@@ -131,6 +140,24 @@ namespace TripleTriadApi.Repositories
         public async Task<List<Player>> GetBotsAsync()
         {
             return await _context.Players.Where(player => player.IsBot).ToListAsync();
+        }
+
+        public async Task<List<Player>> SearchByLoginsAsync(string term, int limit)
+        {
+            var needle = term.Trim().ToLowerInvariant();
+
+            // An empty needle would match everybody; the caller enforces a minimum, and returning nothing here keeps an
+            // accidental empty query from reading the whole table (plans/PLAN-026-player-search-and-online-page/plan.md §3.1).
+            if (needle.Length == 0)
+            {
+                return [];
+            }
+
+            return await _context
+                .Players.Where(player => player.Login.ToLower().Contains(needle))
+                .OrderBy(player => player.Login)
+                .Take(limit)
+                .ToListAsync();
         }
     }
 }

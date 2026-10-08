@@ -52,6 +52,34 @@ namespace TripleTriadApi.Tests.Services
             Assert.False(presence.IsOnline("never"));
         }
 
+        [Fact]
+        public void OnlineLogins_UnionsTheHumansWithTheOnlineBots()
+        {
+            var registry = new BotRegistry();
+            registry.Load(
+                [
+                    new BotRegistry.Bot("always", 100),
+                    new BotRegistry.Bot("never", 0),
+                    // Fillers, so the rolls alone meet the floor and never's zero activity is not masked by promotion.
+                    new BotRegistry.Bot("filler-a", 100),
+                    new BotRegistry.Bot("filler-b", 100),
+                    new BotRegistry.Bot("filler-c", 100),
+                ]
+            );
+            var presence = new BotAwarePresence(
+                new ConnectionPresence(),
+                registry,
+                new FixedClock(Now)
+            );
+            presence.AddConnection("c1", "argel");
+
+            var online = presence.OnlineLogins();
+
+            Assert.Contains("argel", online); // a human, from the sockets
+            Assert.Contains("always", online); // a bot, from the emulation
+            Assert.DoesNotContain("never", online); // activity 0 is never rolled online
+        }
+
         private static BotAwarePresence Create() =>
             new(new ConnectionPresence(), new BotRegistry(), new FixedClock(Now));
 

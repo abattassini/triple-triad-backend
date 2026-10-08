@@ -403,6 +403,139 @@ namespace TripleTriadApi.Tests.Controllers
         }
 
         [Fact]
+        public async Task Search_FindsPlayersCaseInsensitively_BotsIncluded_SelfExcluded()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, PlayerLogin); // argel — the caller, deliberately matching the query
+            await SeedPlayerAsync(context, "Argon", avatarUrl: "avatars/argon.png");
+            await SeedPlayerAsync(context, "argonaut");
+            await SeedPlayerAsync(context, "sparring-bot", isBot: true);
+            await SeedPlayerAsync(context, "zebra"); // no match
+
+            var controller = CreateController(context, PlayerLogin);
+
+            // Mixed case on purpose: the query must still match lower-case and upper-case logins alike.
+            var result = await controller.Search("AR");
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+            var players = json.RootElement.GetProperty("players").EnumerateArray().ToList();
+
+            Assert.Equal(3, players.Count);
+            Assert.DoesNotContain(
+                players,
+                player => player.GetProperty("login").GetString() == PlayerLogin
+            );
+
+            var argon = players.Single(player =>
+                player.GetProperty("login").GetString() == "Argon"
+            );
+            Assert.Equal("avatars/argon.png", argon.GetProperty("avatarUrl").GetString());
+            Assert.False(argon.GetProperty("isBot").GetBoolean());
+
+            // A bot is an ordinary row, so it is a hit like anyone.
+            var bot = players.Single(player =>
+                player.GetProperty("login").GetString() == "sparring-bot"
+            );
+            Assert.True(bot.GetProperty("isBot").GetBoolean());
+        }
+
+        [Fact]
+        public async Task Search_WithAnEmptyQuery_IsEmpty()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, PlayerLogin);
+            await SeedPlayerAsync(context, "Argon");
+
+            var result = await CreateController(context, PlayerLogin).Search("");
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+
+            Assert.Empty(json.RootElement.GetProperty("players").EnumerateArray());
+        }
+
+        [Fact]
+        public async Task Search_FromASingleCharacter_FindsMatches()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, PlayerLogin);
+            await SeedPlayerAsync(context, "Argon");
+
+            // One character is enough to search (plans/PLAN-026-player-search-and-online-page/plan.md §11).
+            var result = await CreateController(context, PlayerLogin).Search("A");
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+            var players = json.RootElement.GetProperty("players").EnumerateArray().ToList();
+
+            Assert.Single(players);
+            Assert.Equal("Argon", players[0].GetProperty("login").GetString());
+        }
+
+        [Fact]
+        public async Task Search_WithoutALogin_Is401()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, PlayerLogin);
+
+            var result = await CreateController(context, login: null).Search("ar");
+
+            Assert.IsType<UnauthorizedObjectResult>(result.Result);
+        }
+
+        [Fact]
+        public async Task Online_ForAnOperator_ListsThePlayersConnectedRightNow()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, "argel", avatarUrl: "avatars/argel.png");
+            await SeedPlayerAsync(context, "rival");
+            await SeedPlayerAsync(context, "offline-guy");
+
+            var presence = new ConnectionPresence();
+            presence.AddConnection("c1", "argel");
+            presence.AddConnection("c2", "rival");
+
+            var result = await CreateController(context, "argel", presence).Online();
+
+            var ok = Assert.IsType<OkObjectResult>(result.Result);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+            var logins = json
+                .RootElement.GetProperty("players")
+                .EnumerateArray()
+                .Select(player => player.GetProperty("login").GetString())
+                .ToList();
+
+            // Ordinally ordered, and nobody offline — the third player holds no connection.
+            Assert.Equal(new[] { "argel", "rival" }, logins);
+        }
+
+        [Fact]
+        public async Task Online_ForANonOperator_Is403()
+        {
+            using var context = CreateContext();
+            await SeedPlayerAsync(context, "rival");
+
+            var presence = new ConnectionPresence();
+            presence.AddConnection("c1", "rival");
+
+            var result = await CreateController(context, "rival", presence).Online();
+
+            var status = Assert.IsType<ObjectResult>(result.Result);
+            Assert.Equal(403, status.StatusCode);
+        }
+
+        [Fact]
+        public async Task Online_WithoutALogin_Is401()
+        {
+            using var context = CreateContext();
+
+            var result = await CreateController(context, login: null).Online();
+
+            Assert.IsType<UnauthorizedObjectResult>(result.Result);
+        }
+
+        [Fact]
         public async Task Me_ReportsTheCardAndPackCounts()
         {
             using var context = CreateContext();
@@ -486,7 +619,11 @@ namespace TripleTriadApi.Tests.Controllers
             );
 
         /// <summary>The controller under test, with the authenticated login (or none) in its HttpContext.</summary>
-        private static PlayerController CreateController(TripleTriadContext context, string? login)
+        private static PlayerController CreateController(
+            TripleTriadContext context,
+            string? login,
+            IPlayerPresence? presence = null
+        )
         {
             var controller = new PlayerController(
                 new PlayerRepository(context),
@@ -499,7 +636,7 @@ namespace TripleTriadApi.Tests.Controllers
                 new TokenService(),
                 PasswordRecoveryTestHarness.CreateService(context, new RecordingEmailSender()),
                 CreateFriendService(context),
-                new ConnectionPresence()
+                presence ?? new ConnectionPresence()
             );
 
             var claims = login is null
@@ -524,7 +661,12 @@ namespace TripleTriadApi.Tests.Controllers
         private static FriendService CreateFriendService(TripleTriadContext context) =>
             FriendshipTestHarness.CreateFriendService(context);
 
-        private static async Task SeedPlayerAsync(TripleTriadContext context, string login)
+        private static async Task SeedPlayerAsync(
+            TripleTriadContext context,
+            string login,
+            string? avatarUrl = null,
+            bool isBot = false
+        )
         {
             context.Players.Add(
                 new Player
@@ -533,6 +675,8 @@ namespace TripleTriadApi.Tests.Controllers
                     Email = $"{login}@example.com",
                     PasswordHash = "hash",
                     Coins = 0,
+                    AvatarUrl = avatarUrl,
+                    IsBot = isBot,
                 }
             );
 

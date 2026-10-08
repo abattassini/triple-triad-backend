@@ -80,5 +80,42 @@ namespace TripleTriadApi.Tests.Services
 
             Assert.Equal(1, presence.ConnectionCount(Me));
         }
+
+        [Fact]
+        public void OnlineLogins_IsEmptyWhenNobodyIsConnected()
+        {
+            var presence = new ConnectionPresence();
+
+            Assert.Empty(presence.OnlineLogins());
+        }
+
+        [Fact]
+        public void OnlineLogins_NamesEachOnlinePlayerOnceWhateverTheConnectionCount()
+        {
+            var presence = new ConnectionPresence();
+            presence.AddConnection("c1", Me);
+            presence.AddConnection("c2", Me);
+            presence.AddConnection("c3", Rival);
+
+            var online = presence.OnlineLogins();
+
+            Assert.Equal(2, online.Count);
+            Assert.Contains(Me, online);
+            Assert.Contains(Rival, online);
+        }
+
+        [Fact]
+        public void OnlineLogins_DropsAPlayerWhenTheirLastConnectionGoes()
+        {
+            var presence = new ConnectionPresence();
+            presence.AddConnection("c1", Me);
+            presence.AddConnection("c2", Me);
+
+            Assert.Equal(Me, presence.RemoveConnection("c1"));
+            Assert.Contains(Me, presence.OnlineLogins());
+
+            Assert.Equal(Me, presence.RemoveConnection("c2"));
+            Assert.DoesNotContain(Me, presence.OnlineLogins());
+        }
     }
 }

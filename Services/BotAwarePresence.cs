@@ -31,5 +31,20 @@ namespace TripleTriadApi.Services
 
         /// <summary>A bot holds no sockets, so its count is always the (zero) connection count.</summary>
         public int ConnectionCount(string login) => _connections.ConnectionCount(login);
+
+        /// <summary>
+        /// Everyone online right now — the humans from the live sockets, unioned with the bots the emulation reports
+        /// (plans/PLAN-026-player-search-and-online-page/plan.md §3.2). This is what makes the online roster "including
+        /// bots" without the endpoint having to know what a bot is.
+        /// </summary>
+        public IReadOnlyCollection<string> OnlineLogins()
+        {
+            var online = new HashSet<string>(_connections.OnlineLogins(), StringComparer.Ordinal);
+            online.UnionWith(
+                BotPresence.OnlineBots(_registry.Bots, _clock.GetUtcNow().UtcDateTime)
+            );
+
+            return online.ToArray();
+        }
     }
 }

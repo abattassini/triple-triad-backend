@@ -24,6 +24,13 @@ namespace TripleTriadApi.Services
 
         /// <summary>How many connections this player holds — for tests and diagnostics, not for the API.</summary>
         int ConnectionCount(string login);
+
+        /// <summary>
+        /// Every login that is online right now, one entry per player whatever the connection count — what the
+        /// operators' online roster reads (plans/PLAN-026-player-search-and-online-page/plan.md §3.2). Humans only here;
+        /// the bot-aware decorator unions the emulated bots on top.
+        /// </summary>
+        IReadOnlyCollection<string> OnlineLogins();
     }
 
     /// <summary>
@@ -40,8 +47,9 @@ namespace TripleTriadApi.Services
     /// </summary>
     public class ConnectionPresence : IPlayerPresence
     {
-        private readonly ConcurrentDictionary<string, string> _byConnection =
-            new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, string> _byConnection = new(
+            StringComparer.Ordinal
+        );
         private readonly ConcurrentDictionary<string, int> _counts = new(StringComparer.Ordinal);
 
         public void AddConnection(string connectionId, string login)
@@ -78,5 +86,12 @@ namespace TripleTriadApi.Services
 
         public int ConnectionCount(string login) =>
             _counts.TryGetValue(login, out var count) ? Math.Max(count, 0) : 0;
+
+        /// <summary>
+        /// A snapshot of the logins holding a connection — taken with <c>ToArray</c> so a caller enumerating it cannot
+        /// trip over a concurrent add or remove. A count only ever exists for a login that has been seen, so these keys
+        /// are exactly the set of humans online.
+        /// </summary>
+        public IReadOnlyCollection<string> OnlineLogins() => _counts.Keys.ToArray();
     }
 }
