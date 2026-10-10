@@ -37,9 +37,16 @@ namespace TripleTriadApi.Tests.Services
             return Task.CompletedTask;
         }
 
-        public Task ChallengeReceivedAsync(string recipientId, int matchId, string challenger)
+        public Task ChallengeReceivedAsync(
+            string recipientId,
+            int matchId,
+            string challenger,
+            string[] rules
+        )
         {
-            _challengePushes.Add(new ChallengePush(recipientId, "received", matchId, challenger));
+            _challengePushes.Add(
+                new ChallengePush(recipientId, "received", matchId, challenger, rules)
+            );
             return Task.CompletedTask;
         }
 
@@ -83,12 +90,15 @@ namespace TripleTriadApi.Tests.Services
 
         public sealed record PresencePush(string RecipientId, string Login, bool Online);
 
-        /// <summary>One challenge hint: which kind, which match, and (for `received`) who sent it.</summary>
+        /// <summary>
+        /// One challenge hint: which kind, which match, (for `received`) who sent it and the rules they chose.
+        /// </summary>
         public sealed record ChallengePush(
             string RecipientId,
             string Kind,
             int MatchId,
-            string? Challenger
+            string? Challenger,
+            string[]? Rules = null
         );
     }
 }

@@ -55,10 +55,15 @@ namespace TripleTriadApi.Services
         /// Sends <paramref name="challengedLogin"/> an invitation: only a **friend who is online**, never yourself, and
         /// only while you are free yourself (§3.3). The row is written before anything is pushed, so an invitation that
         /// nobody answers still exists to be read later.
+        ///
+        /// <paramref name="rules"/> is the challenger's rule choice — the empty list is a basic match — and it is stored
+        /// on the invitation's own match row, so the accepted game plays under it
+        /// (plans/PLAN-028-challenge-rules-and-friend-list/plan.md §3.1).
         /// </summary>
         public async Task<ChallengeResult> ChallengeAsync(
             string challenger,
             string challengedLogin,
+            List<MatchRule> rules,
             DateTime now
         )
         {
@@ -114,6 +119,7 @@ namespace TripleTriadApi.Services
             var match = await _games.CreateChallengeMatchAsync(
                 challenger,
                 challengedPlayer.Login,
+                rules,
                 now
             );
 
@@ -126,13 +132,15 @@ namespace TripleTriadApi.Services
             );
 
             // The push is the extra: it opens the dialog straight away, and only for a player free to take it (§1.4).
-            // Someone in a match reads the invitation in their inbox instead.
+            // Someone in a match reads the invitation in their inbox instead. The rules ride along, so the dialog can
+            // say what the game will be played under before it is answered (§3.5).
             if (!await IsBusyAsync(challengedPlayer.Login))
             {
                 await _notifier.ChallengeReceivedAsync(
                     challengedPlayer.Login,
                     match.Id,
-                    challenger
+                    challenger,
+                    match.Rules.ToNames()
                 );
             }
 

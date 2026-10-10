@@ -27,7 +27,8 @@ namespace TripleTriadApi.Tests.Services
             var presence = Online(Rival);
             var notifier = new RecordingPlayerNotifier();
 
-            var result = await Service(context, notifier, presence).ChallengeAsync(Me, Rival, Now);
+            var result = await Service(context, notifier, presence)
+                .ChallengeAsync(Me, Rival, [], Now);
 
             Assert.True(result.Succeeded);
 
@@ -51,6 +52,42 @@ namespace TripleTriadApi.Tests.Services
         }
 
         [Fact]
+        public async Task Challenge_WithRules_StoresThemOnTheRowAndPushesThem()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context, Me, Rival);
+            await BefriendAsync(context, Me, Rival);
+            var notifier = new RecordingPlayerNotifier();
+
+            var result = await Service(context, notifier, Online(Rival))
+                .ChallengeAsync(Me, Rival, [MatchRule.Same, MatchRule.Plus], Now);
+
+            Assert.True(result.Succeeded);
+
+            // The choice rides on the invitation's own row, so acceptance needs no second write (PLAN-028 §3.1).
+            var match = await context.Matches.SingleAsync();
+            Assert.Equal(new List<MatchRule> { MatchRule.Same, MatchRule.Plus }, match.Rules);
+
+            // And the push names them, so the challenged's dialog can say what the game will be played under.
+            var push = Assert.Single(notifier.ChallengesFor(Rival));
+            Assert.Equal(new[] { "Same", "Plus" }, push.Rules);
+        }
+
+        [Fact]
+        public async Task Challenge_WithoutRules_IsABasicMatch()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context, Me, Rival);
+            await BefriendAsync(context, Me, Rival);
+            var notifier = new RecordingPlayerNotifier();
+
+            await Service(context, notifier, Online(Rival)).ChallengeAsync(Me, Rival, [], Now);
+
+            Assert.Empty((await context.Matches.SingleAsync()).Rules);
+            Assert.Empty(Assert.Single(notifier.ChallengesFor(Rival)).Rules!);
+        }
+
+        [Fact]
         public async Task Challenge_WhenTheChallengedIsInAMatch_WritesTheRowButDoesNotPush()
         {
             using var context = CreateContext();
@@ -60,7 +97,7 @@ namespace TripleTriadApi.Tests.Services
             var notifier = new RecordingPlayerNotifier();
 
             var result = await Service(context, notifier, Online(Rival))
-                .ChallengeAsync(Me, Rival, Now);
+                .ChallengeAsync(Me, Rival, [], Now);
 
             Assert.True(result.Succeeded);
             Assert.Equal(
@@ -80,7 +117,7 @@ namespace TripleTriadApi.Tests.Services
             await SeedAsync(context, Me, Stranger);
 
             var result = await Service(context, presence: Online(Stranger))
-                .ChallengeAsync(Me, Stranger, Now);
+                .ChallengeAsync(Me, Stranger, [], Now);
 
             Assert.Equal(ChallengeService.ChallengeFailure.NotFriends, result.Failure);
             Assert.Empty(context.Matches);
@@ -94,7 +131,7 @@ namespace TripleTriadApi.Tests.Services
             await SeedAsync(context, Me, Rival);
             await BefriendAsync(context, Me, Rival);
 
-            var result = await Service(context).ChallengeAsync(Me, Rival, Now);
+            var result = await Service(context).ChallengeAsync(Me, Rival, [], Now);
 
             Assert.Equal(ChallengeService.ChallengeFailure.Offline, result.Failure);
             Assert.Empty(context.Matches);
@@ -106,7 +143,7 @@ namespace TripleTriadApi.Tests.Services
             using var context = CreateContext();
             await SeedAsync(context, Me);
 
-            var result = await Service(context).ChallengeAsync(Me, Me, Now);
+            var result = await Service(context).ChallengeAsync(Me, Me, [], Now);
 
             Assert.Equal(ChallengeService.ChallengeFailure.Yourself, result.Failure);
             Assert.Empty(context.Matches);
@@ -121,7 +158,7 @@ namespace TripleTriadApi.Tests.Services
             await SeedActiveMatchAsync(context, Me, Bystander);
 
             var result = await Service(context, presence: Online(Rival))
-                .ChallengeAsync(Me, Rival, Now);
+                .ChallengeAsync(Me, Rival, [], Now);
 
             Assert.Equal(ChallengeService.ChallengeFailure.Busy, result.Failure);
             Assert.Empty(context.Notifications);
@@ -135,7 +172,7 @@ namespace TripleTriadApi.Tests.Services
             await BefriendAsync(context, Me, Rival);
             var notifier = new RecordingPlayerNotifier();
             var service = Service(context, notifier, Online(Rival));
-            var challenge = await service.ChallengeAsync(Me, Rival, Now);
+            var challenge = await service.ChallengeAsync(Me, Rival, [], Now);
 
             var result = await service.AcceptAsync(challenge.MatchId, Rival, Now);
 
@@ -160,7 +197,7 @@ namespace TripleTriadApi.Tests.Services
             await SeedAsync(context, Me, Rival, Bystander);
             await BefriendAsync(context, Me, Rival);
             var service = Service(context, presence: Online(Rival));
-            var challenge = await service.ChallengeAsync(Me, Rival, Now);
+            var challenge = await service.ChallengeAsync(Me, Rival, [], Now);
             await SeedActiveMatchAsync(context, Rival, Bystander);
 
             var result = await service.AcceptAsync(challenge.MatchId, Rival, Now);
@@ -179,7 +216,7 @@ namespace TripleTriadApi.Tests.Services
             await SeedAsync(context, Me, Rival, Stranger);
             await BefriendAsync(context, Me, Rival);
             var service = Service(context, presence: Online(Rival));
-            var challenge = await service.ChallengeAsync(Me, Rival, Now);
+            var challenge = await service.ChallengeAsync(Me, Rival, [], Now);
 
             var result = await service.AcceptAsync(challenge.MatchId, Stranger, Now);
 
@@ -199,6 +236,7 @@ namespace TripleTriadApi.Tests.Services
             var challenge = await service.ChallengeAsync(
                 Me,
                 Rival,
+                [],
                 Now - MatchTimeouts.PendingChallenge - TimeSpan.FromMinutes(1)
             );
 
@@ -217,7 +255,7 @@ namespace TripleTriadApi.Tests.Services
             await BefriendAsync(context, Me, Rival);
             var notifier = new RecordingPlayerNotifier();
             var service = Service(context, notifier, Online(Rival));
-            var challenge = await service.ChallengeAsync(Me, Rival, Now);
+            var challenge = await service.ChallengeAsync(Me, Rival, [], Now);
 
             var result = await service.RefuseAsync(challenge.MatchId, Rival);
 
@@ -235,7 +273,7 @@ namespace TripleTriadApi.Tests.Services
             await BefriendAsync(context, Me, Rival);
             var notifier = new RecordingPlayerNotifier();
             var service = Service(context, notifier, Online(Rival));
-            var challenge = await service.ChallengeAsync(Me, Rival, Now);
+            var challenge = await service.ChallengeAsync(Me, Rival, [], Now);
 
             var result = await service.CancelAsync(challenge.MatchId, Rival);
 
@@ -256,9 +294,10 @@ namespace TripleTriadApi.Tests.Services
             var stale = await games.CreateChallengeMatchAsync(
                 Me,
                 Rival,
+                [],
                 Now - MatchTimeouts.PendingChallenge - TimeSpan.FromMinutes(1)
             );
-            var fresh = await games.CreateChallengeMatchAsync(Me, Rival, Now);
+            var fresh = await games.CreateChallengeMatchAsync(Me, Rival, [], Now);
             context.Notifications.Add(
                 new Notification
                 {
@@ -298,8 +337,13 @@ namespace TripleTriadApi.Tests.Services
             using var context = CreateContext();
             var games = new GameRepository(context);
             // One Rival sent and one Rival received: signing out ends both (§3.2 #5).
-            await games.CreateChallengeMatchAsync(Rival, Me, Now - TimeSpan.FromMinutes(1));
-            await games.CreateChallengeMatchAsync(Bystander, Rival, Now - TimeSpan.FromMinutes(1));
+            await games.CreateChallengeMatchAsync(Rival, Me, [], Now - TimeSpan.FromMinutes(1));
+            await games.CreateChallengeMatchAsync(
+                Bystander,
+                Rival,
+                [],
+                Now - TimeSpan.FromMinutes(1)
+            );
 
             var ended = await Service(context).ExpireInvolvingAsync(Rival);
 
@@ -315,11 +359,11 @@ namespace TripleTriadApi.Tests.Services
             await SeedAsync(context, Me, Rival, Bystander);
             await BefriendAsync(context, Me, Rival);
             // Somebody else's invitation to Me is already outstanding.
-            var received = await games.CreateChallengeMatchAsync(Bystander, Me, Now);
+            var received = await games.CreateChallengeMatchAsync(Bystander, Me, [], Now);
 
             // Sending one of its own supersedes it: one match per player (§13).
             var result = await Service(context, presence: Online(Rival))
-                .ChallengeAsync(Me, Rival, Now);
+                .ChallengeAsync(Me, Rival, [], Now);
 
             Assert.True(result.Succeeded);
             Assert.Equal(

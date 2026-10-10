@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TripleTriadApi.Models;
 using TripleTriadApi.Services;
 
 namespace TripleTriadApi.Controllers
@@ -25,12 +26,16 @@ namespace TripleTriadApi.Controllers
         }
 
         /// <summary>
-        /// Invites <paramref name="login"/> — a friend who must be online. The answer is the pending match, so the
-        /// caller can hold on to it while it waits.
+        /// Invites <paramref name="login"/> — a friend who must be online — to play
+        /// <paramref name="request"/>'s rules (an empty or absent set is a basic match). The answer is the pending
+        /// match, so the caller can hold on to it while it waits.
         /// </summary>
         [Authorize]
         [HttpPost("{login}")]
-        public async Task<ActionResult<object>> Challenge(string login)
+        public async Task<ActionResult<object>> Challenge(
+            string login,
+            [FromBody] ChallengeRequest? request = null
+        )
         {
             try
             {
@@ -40,7 +45,25 @@ namespace TripleTriadApi.Controllers
                     return Unauthorized(new { error = "User not authenticated" });
                 }
 
-                var result = await _challenges.ChallengeAsync(caller, login, DateTime.UtcNow);
+                // Rules are optional; unknown names are rejected so a typo never silently creates a challenge with
+                // different rules than the client asked for — the same contract the create/quick endpoints keep.
+                if (!MatchRuleExtensions.TryParseAll(request?.Rules, out var rules))
+                {
+                    return BadRequest(
+                        new
+                        {
+                            error = "Unknown rule. Supported rules: "
+                                + string.Join(", ", MatchRuleExtensions.SupportedRuleNames()),
+                        }
+                    );
+                }
+
+                var result = await _challenges.ChallengeAsync(
+                    caller,
+                    login,
+                    rules,
+                    DateTime.UtcNow
+                );
 
                 return ToActionResult(result);
             }
@@ -178,5 +201,17 @@ namespace TripleTriadApi.Controllers
         {
             return User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
         }
+    }
+
+    /// <summary>
+    /// Body of <c>POST api/challenges/{login}</c>: the rules the challenger chose
+    /// (plans/PLAN-028-challenge-rules-and-friend-list/plan.md §3.2).
+    ///
+    /// Omitted or null means the basic rules only; unknown names are rejected. The client sends
+    /// <c>ALL_MATCH_RULES</c> for *Match with Rules* and <c>[]</c> for *Basic Match*, exactly as Quick Match does.
+    /// </summary>
+    public class ChallengeRequest
+    {
+        public string[]? Rules { get; set; }
     }
 }

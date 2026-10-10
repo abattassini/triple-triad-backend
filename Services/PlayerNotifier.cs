@@ -30,8 +30,16 @@ namespace TripleTriadApi.Services
         /// Somebody challenged the recipient to a match — the hint that opens the challenge dialog over whatever they
         /// are doing (plans/PLAN-027-friend-challenge/plan.md §3.9). Sent only when the challenged player is **free**:
         /// a player already in a match learns about the invitation from their inbox instead.
+        ///
+        /// <paramref name="rules"/> names the rules the challenger chose, so the dialog can say what the match will be
+        /// played under before the challenged answers (plans/PLAN-028-challenge-rules-and-friend-list/plan.md §3.5).
         /// </summary>
-        Task ChallengeReceivedAsync(string recipientId, int matchId, string challenger);
+        Task ChallengeReceivedAsync(
+            string recipientId,
+            int matchId,
+            string challenger,
+            string[] rules
+        );
 
         /// <summary>The recipient's outgoing challenge was accepted: the match is on, and both sides pick a hand.</summary>
         Task ChallengeAcceptedAsync(string recipientId, int matchId);
@@ -63,10 +71,23 @@ namespace TripleTriadApi.Services
                 .Clients.Group(GroupOf(recipientId))
                 .SendAsync("FriendPresenceChanged", new { login, online });
 
-        public Task ChallengeReceivedAsync(string recipientId, int matchId, string challenger) =>
+        public Task ChallengeReceivedAsync(
+            string recipientId,
+            int matchId,
+            string challenger,
+            string[] rules
+        ) =>
             _hub
                 .Clients.Group(GroupOf(recipientId))
-                .SendAsync("ChallengeReceived", new { matchId, challenger });
+                .SendAsync(
+                    "ChallengeReceived",
+                    new
+                    {
+                        matchId,
+                        challenger,
+                        rules,
+                    }
+                );
 
         public Task ChallengeAcceptedAsync(string recipientId, int matchId) =>
             _hub

@@ -40,6 +40,36 @@ namespace TripleTriadApi.Tests.Controllers
         }
 
         [Fact]
+        public async Task Challenge_WithRules_StoresThemOnThePendingMatch()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context, Me, Rival);
+            await BefriendAsync(context, Me, Rival);
+
+            var result = await CreateController(context, Me, presence: Online(Rival))
+                .Challenge(Rival, new ChallengeRequest { Rules = ["Same", "Plus"] });
+
+            Assert.IsType<OkObjectResult>(result.Result);
+            Assert.Equal(
+                new List<MatchRule> { MatchRule.Same, MatchRule.Plus },
+                (await context.Matches.SingleAsync()).Rules
+            );
+        }
+
+        [Fact]
+        public async Task Challenge_WithAnUnknownRule_Is400()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context, Me, Rival);
+            await BefriendAsync(context, Me, Rival);
+
+            var result = await CreateController(context, Me, presence: Online(Rival))
+                .Challenge(Rival, new ChallengeRequest { Rules = ["Nope"] });
+
+            Assert.IsType<BadRequestObjectResult>(result.Result);
+        }
+
+        [Fact]
         public async Task Challenge_ForAPlayerWhoDoesNotExist_Is404()
         {
             using var context = CreateContext();

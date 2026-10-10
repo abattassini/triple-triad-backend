@@ -61,10 +61,14 @@ namespace TripleTriadApi.Repositories
         /// Creates a challenge: a match whose second seat is the challenged player, born **`pending`** (awaiting their
         /// answer) rather than `active` (plans/PLAN-027-friend-challenge/plan.md §3.4). The turn is a placeholder —
         /// the real opener is drawn when the challenge is accepted.
+        ///
+        /// <paramref name="rules"/> are the rules the challenger chose, stored on the row so the accepted match plays
+        /// under them (plans/PLAN-028-challenge-rules-and-friend-list/plan.md §3.1); an empty list means a basic match.
         /// </summary>
         Task<Match> CreateChallengeMatchAsync(
             string challengerId,
             string challengedId,
+            List<MatchRule> rules,
             DateTime now
         );
 
@@ -420,6 +424,7 @@ namespace TripleTriadApi.Repositories
         public async Task<Match> CreateChallengeMatchAsync(
             string challengerId,
             string challengedId,
+            List<MatchRule> rules,
             DateTime now
         )
         {
@@ -433,7 +438,9 @@ namespace TripleTriadApi.Repositories
                 Status = "pending",
                 Player1Score = 5,
                 Player2Score = 5,
-                Rules = [],
+                // The challenger's choice (plans/PLAN-028-challenge-rules-and-friend-list/plan.md §3.1): the accepted
+                // match plays under these rules with no second write.
+                Rules = rules,
                 CreatedAt = now,
             };
 
