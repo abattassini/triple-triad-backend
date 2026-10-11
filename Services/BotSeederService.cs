@@ -32,6 +32,15 @@ namespace TripleTriadApi.Services
         public const int MaxSeededOutcome = 80;
 
         /// <summary>
+        /// Every nth bot of the cohort plays <see cref="CPUPlayingProfile.Formidable"/> rather than the default
+        /// <see cref="CPUPlayingProfile.Decent"/> (plans/PLAN-029-cpu-playing-profiles/plan.md). The personalities are
+        /// spread through the cohort instead of clustered at the front, and the assignment is by position so it
+        /// consumes no randomness — the draw's values stay exactly what a scripted test expects. With the default
+        /// cohort of <see cref="BotCount"/> that is seven bots.
+        /// </summary>
+        public const int FormidableEveryNthBot = 3;
+
+        /// <summary>
         /// BCrypt cost for a bot's password hash. Deliberately far below the production factor: the hashed secret is a
         /// fresh random GUID that nobody — not even the app — ever uses, and a bot can never authenticate, so the only
         /// thing the cost buys here is the two seconds a whole cohort of twenty would otherwise add to every boot.
@@ -82,6 +91,11 @@ namespace TripleTriadApi.Services
                         Wins = random.Next(MaxSeededOutcome + 1),
                         Losses = random.Next(MaxSeededOutcome + 1),
                         Ties = random.Next(MaxSeededOutcome + 1),
+                        // How this bot plays. Decent is the original bot; every third one is Formidable.
+                        CpuPlayingProfile =
+                            i % FormidableEveryNthBot == 0
+                                ? CPUPlayingProfile.Formidable
+                                : CPUPlayingProfile.Decent,
                     }
                 );
             }

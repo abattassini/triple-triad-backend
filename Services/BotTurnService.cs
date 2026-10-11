@@ -73,7 +73,16 @@ namespace TripleTriadApi.Services
                 }
 
                 var hand = match.PlayerHands.Where(row => row.PlayerId == actor).ToList();
-                var move = moveSelector.Select(match, board, hand, actor, random);
+
+                // The bot's own personality decides how its moves are scored (plans/PLAN-029-cpu-playing-profiles).
+                var move = moveSelector.Select(
+                    match,
+                    board,
+                    hand,
+                    actor,
+                    random,
+                    bots.ProfileOf(actor)
+                );
                 if (move is null)
                 {
                     continue;

@@ -454,9 +454,16 @@ using (var scope = app.Services.CreateScope())
     var botRegistry = scope.ServiceProvider.GetRequiredService<BotRegistry>();
     var botRows = await context
         .Players.Where(player => player.IsBot)
-        .Select(player => new { player.Login, player.Activity })
+        .Select(player => new
+        {
+            player.Login,
+            player.Activity,
+            player.CpuPlayingProfile,
+        })
         .ToListAsync();
-    botRegistry.Load(botRows.Select(row => new BotRegistry.Bot(row.Login, row.Activity)));
+    botRegistry.Load(
+        botRows.Select(row => new BotRegistry.Bot(row.Login, row.Activity, row.CpuPlayingProfile))
+    );
 }
 
 // Log startup information

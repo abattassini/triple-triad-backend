@@ -150,6 +150,47 @@ namespace TripleTriadApi.Services
                 .ToList();
 
         /// <summary>
+        /// The four orthogonal neighbour offsets (top, right, bottom, left) — the cells a played card can collide
+        /// with. The same set <c>GetBattleDirections</c> walks, kept here as a card-free list so the board predicates
+        /// below can use it too.
+        /// </summary>
+        private static readonly (int Dx, int Dy)[] NeighbourOffsets =
+        [
+            (0, -1),
+            (1, 0),
+            (0, 1),
+            (-1, 0),
+        ];
+
+        /// <summary>
+        /// True when every in-bounds orthogonal neighbour of <c>(x, y)</c> already holds a card, so no future card can
+        /// ever be played next to it. Because a capture only ever happens when a card lands in one of those neighbour
+        /// cells, such a card can never be captured again — there is no COMBO rule to chain a capture in from another
+        /// square. The cell itself need not be occupied: this is a property of the <em>position</em>.
+        /// </summary>
+        public static bool IsInaccessible(IReadOnlyCollection<CardPlacement> board, int x, int y) =>
+            NeighbourOffsets.All(offset =>
+                !IsPositionInBounds(x + offset.Dx, y + offset.Dy)
+                || board.Any(placement =>
+                    placement.X == x + offset.Dx && placement.Y == y + offset.Dy
+                )
+            );
+
+        /// <summary>
+        /// How many cards <paramref name="owner"/> controls that are <em>inaccessible</em> (see
+        /// <see cref="IsInaccessible"/>): on the board, and impossible to ever capture. It is derived from the board
+        /// alone — nothing about it is stored — so a caller can compare the count before and after a candidate move to
+        /// see what that move rendered permanently its own (the <c>Formidable</c> profile does exactly that).
+        /// </summary>
+        public static int InaccessibleOwned(
+            IReadOnlyCollection<CardPlacement> board,
+            string owner
+        ) =>
+            board.Count(placement =>
+                placement.Owner == owner && IsInaccessible(board, placement.X, placement.Y)
+            );
+
+        /// <summary>
         /// Every move <paramref name="actor"/> could make from this board and hand, in reading order, each resolved
         /// through <see cref="PlayCard"/> on its own copy of the board.
         /// <para>

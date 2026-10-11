@@ -153,12 +153,87 @@ namespace TripleTriadApi.Tests.Services
             Assert.All(board, placement => Assert.Equal("argel", placement.Owner));
         }
 
+        [Fact]
+        public void Select_Formidable_PlaysTheCardThatMakesAnExistingCardInaccessible()
+        {
+            // The bot's weak card sits in a corner with only (0,1) left free beside it, and a weak card of argel's
+            // blocks the other side. Playing at (0,1) seals the corner card in for good — nothing can ever be played
+            // next to it again — which is the Formidable profile's own consideration.
+            var board = new List<CardPlacement>
+            {
+                PlacedAt(WeakCard(102), TestBots.Login, 0, 0),
+                PlacedAt(WeakCard(101), "argel", 1, 0),
+            };
+            var hand = new List<PlayerHand> { InHand(StrongCard(201)), InHand(WeakCard(202)) };
+
+            var chosen = Select(ActiveMatch(), board, hand, profile: CPUPlayingProfile.Formidable);
+
+            Assert.Equal((0, 1), (chosen.X, chosen.Y));
+            Assert.Equal(202, chosen.CardId);
+            Assert.Equal(0, chosen.Captures);
+        }
+
+        [Fact]
+        public void Select_Decent_TakesTheCapture_InsteadOfSealingTheCorner()
+        {
+            // The same position: Decent has no term for the sealed corner card, so it does what it always did — puts
+            // its strong card beside argel's weak one and takes it. Only the profile explains the other test's move.
+            var board = new List<CardPlacement>
+            {
+                PlacedAt(WeakCard(102), TestBots.Login, 0, 0),
+                PlacedAt(WeakCard(101), "argel", 1, 0),
+            };
+            var hand = new List<PlayerHand> { InHand(StrongCard(201)), InHand(WeakCard(202)) };
+
+            var chosen = Select(ActiveMatch(), board, hand, profile: CPUPlayingProfile.Decent);
+
+            Assert.Equal(201, chosen.CardId);
+            Assert.Equal((2, 0), (chosen.X, chosen.Y));
+            Assert.Equal(1, chosen.Captures);
+        }
+
+        [Fact]
+        public void Select_Formidable_PrefersTheCellItCouldWinTheCardBackFrom()
+        {
+            // On an empty board every cell is equally safe for the played card, so Decent only weighs exposure.
+            // Formidable also asks whether its other card could win the played card back: on the top or bottom edge the
+            // 10 has two free neighbours to attack from, while a corner offers one.
+            var hand = new List<PlayerHand>
+            {
+                InHand(CardWith(201, top: 5, right: 5, bottom: 5, left: 5)),
+                InHand(CardWith(202, top: 1, right: 10, bottom: 1, left: 10)),
+            };
+
+            var chosen = Select(ActiveMatch(), [], hand, profile: CPUPlayingProfile.Formidable);
+
+            Assert.Equal(201, chosen.CardId);
+            Assert.Equal(1, chosen.X);
+            Assert.Contains(chosen.Y, new[] { 0, 2 });
+        }
+
+        [Fact]
+        public void Select_Decent_OnThatSameBoard_KeepsTheCardWhereItRisksFewestSides()
+        {
+            var hand = new List<PlayerHand>
+            {
+                InHand(CardWith(201, top: 5, right: 5, bottom: 5, left: 5)),
+                InHand(CardWith(202, top: 1, right: 10, bottom: 1, left: 10)),
+            };
+
+            var chosen = Select(ActiveMatch(), [], hand, profile: CPUPlayingProfile.Decent);
+
+            Assert.Equal(201, chosen.CardId);
+            Assert.Contains(chosen.X, new[] { 0, 2 });
+            Assert.Contains(chosen.Y, new[] { 0, 2 });
+        }
+
         /// <summary>Run the selector and unwrap the move, with the scripted tie-break these tests expect by default.</summary>
         private static BotMoveSelector.Move Select(
             Match match,
             IReadOnlyCollection<CardPlacement> board,
             IReadOnlyCollection<PlayerHand> hand,
-            IRandomSource? random = null
+            IRandomSource? random = null,
+            CPUPlayingProfile profile = CPUPlayingProfile.Decent
         )
         {
             var selector = new BotMoveSelector(new GameLogicService());
@@ -167,7 +242,8 @@ namespace TripleTriadApi.Tests.Services
                 board,
                 hand,
                 TestBots.Login,
-                random ?? new FixedRandom(0)
+                random ?? new FixedRandom(0),
+                profile
             );
 
             return Assert.IsType<BotMoveSelector.Move>(move);
@@ -214,6 +290,21 @@ namespace TripleTriadApi.Tests.Services
                 LeftValue = 10,
                 Element = [],
                 Level = 10,
+            };
+
+        /// <summary>A card with explicit ranks on each side, for tests that turn on a single facing value.</summary>
+        private static Card CardWith(int id, int top, int right, int bottom, int left) =>
+            new()
+            {
+                Id = id,
+                Name = $"Card {id}",
+                Image = $"ff8-deck/card-{id}.jpg",
+                TopValue = top,
+                RightValue = right,
+                BottomValue = bottom,
+                LeftValue = left,
+                Element = [],
+                Level = 1,
             };
 
         private static PlayerHand InHand(Card card, bool isUsed = false) =>

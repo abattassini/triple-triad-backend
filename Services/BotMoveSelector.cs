@@ -9,8 +9,13 @@ namespace TripleTriadApi.Services
     /// — so a SAME or PLUS flip counts as a capture here exactly as it would in play, and a change to the rules can
     /// never leave the bot evaluating a board that no longer behaves the way it assumes.
     ///
-    /// It is a deliberately one-ply player (plans/PLAN-012-cpu-opponent/plan.md §5.2): it takes what it can see, keeps its
-    /// strong cards where they are hardest to attack, and this class is the only place to make it smarter.
+    /// <para>
+    /// This class chooses the move; it does not decide what a move is <em>worth</em>. That is the
+    /// <see cref="CPUPlayingProfile"/>'s scorer — <see cref="CPUPlayingProfileScorers"/> picks it from the profile, and
+    /// each profile has its own <see cref="MoveScorer"/> (plans/PLAN-029-cpu-playing-profiles/plan.md). One ply, no
+    /// lookahead: this is the one place a move is enumerated and chosen, and the scorers are the one place a profile's
+    /// values are defined.
+    /// </para>
     /// </summary>
     public class BotMoveSelector(GameLogicService gameLogic)
     {
@@ -20,19 +25,26 @@ namespace TripleTriadApi.Services
         public sealed record Move(int CardId, int X, int Y, int Captures);
 
         /// <summary>
-        /// The move to play, or null when the bot has nothing to play with. Captures decide first; between equally
-        /// capturing moves it keeps the strongest card in the least exposed cell (a corner is attacked from two sides,
-        /// the centre from four), and ties are settled with the injected randomness so two matches never play out the
-        /// same way.
+        /// The move to play, or null when the bot has nothing to play with. Each candidate is scored by the scorer the
+        /// <paramref name="profile"/> names — the default, <see cref="CPUPlayingProfile.Decent"/>, is the original
+        /// scoring — the highest score wins, and ties are settled with the injected randomness so two matches never
+        /// play out the same way.
         /// </summary>
         public Move? Select(
             Match match,
             IReadOnlyCollection<CardPlacement> board,
             IReadOnlyCollection<PlayerHand> hand,
             string actor,
-            IRandomSource random
+            IRandomSource random,
+            CPUPlayingProfile profile = CPUPlayingProfile.Decent
         )
         {
+            var scorer = CPUPlayingProfileScorers.For(profile);
+
+            // The cards the bot could still play. A profile whose scoring looks ahead at them (Formidable's recapture)
+            // reads them from the context, so they are gathered once here.
+            var playable = hand.Where(row => !row.IsUsed && row.Card is not null).ToList();
+
             // Every candidate is resolved against its own copy of the board by the enumeration: PlayCard flips the
             // ownership of the cards it captures *in place*, so the match's own placements — tracked by EF and saved
             // with the move that is really played — must never be what a candidate is resolved on, and two candidates
@@ -41,11 +53,16 @@ namespace TripleTriadApi.Services
                 .EnumerateMoves(match, board, hand, actor)
                 .Select(outcome =>
                 {
-                    var captures = outcome.Result.CapturedCards.Count;
+                    var context = new MoveScoringContext(match.Id, outcome, board, playable, actor);
 
                     return (
-                        Move: new Move(outcome.CardId, outcome.X, outcome.Y, captures),
-                        Score: captures * 1000 - Strength(outcome.Card) * ExposedSides(outcome.X, outcome.Y)
+                        Move: new Move(
+                            outcome.CardId,
+                            outcome.X,
+                            outcome.Y,
+                            outcome.Result.CapturedCards.Count
+                        ),
+                        Score: scorer.Score(context)
                     );
                 })
                 .ToList();
@@ -63,23 +80,5 @@ namespace TripleTriadApi.Services
 
             return tied[random.Next(tied.Count)];
         }
-
-        /// <summary>How many sides of a cell are on the board: a corner has 2, an edge 3, the centre 4.</summary>
-        private static int ExposedSides(int x, int y)
-        {
-            var onVerticalEdge = x == 0 || x == GameLogicService.BoardSize - 1;
-            var onHorizontalEdge = y == 0 || y == GameLogicService.BoardSize - 1;
-
-            if (onVerticalEdge && onHorizontalEdge)
-            {
-                return 2;
-            }
-
-            return onVerticalEdge || onHorizontalEdge ? 3 : 4;
-        }
-
-        /// <summary>The four ranks added up: how much of a card is being risked by playing it.</summary>
-        private static int Strength(Card card) =>
-            card.TopValue + card.RightValue + card.BottomValue + card.LeftValue;
     }
 }

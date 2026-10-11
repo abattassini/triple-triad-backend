@@ -47,5 +47,13 @@ namespace TripleTriadApi.Models
         /// without a migration.
         /// </summary>
         public int Activity { get; set; }
+
+        /// <summary>
+        /// How this bot plays — the personality the turn engine scores its moves with
+        /// (plans/PLAN-029-cpu-playing-profiles/plan.md). Meaningless (and always <see cref="CPUPlayingProfile.Decent"/>)
+        /// for a human, which is also the column default, so an existing row can never be read as a stronger bot by
+        /// accident.
+        /// </summary>
+        public CPUPlayingProfile CpuPlayingProfile { get; set; } = CPUPlayingProfile.Decent;
     }
 }

@@ -33,6 +33,18 @@ namespace TripleTriadApi.Tests.Services
         /// </summary>
         private const int HumanCornerB = 22;
 
+        /// <summary>The bot's strong (rank 10) card in the profile test's hand.</summary>
+        private const int BotStrongCard = 31;
+
+        /// <summary>The bot's weak (rank 1) card — the one it plays to seal its corner card in.</summary>
+        private const int BotWeakCard = 32;
+
+        /// <summary>The human's rank-1 card on the board, blocking one side of the bot's corner.</summary>
+        private const int HumanProfileCard = 33;
+
+        /// <summary>The bot's own rank-1 card in the corner the profile test seals in.</summary>
+        private const int BotProfileCornerCard = 34;
+
         [Fact]
         public async Task Advance_PlaysTheDueMove_AndPushesIt()
         {
@@ -414,13 +426,71 @@ namespace TripleTriadApi.Tests.Services
             );
         }
 
+        [Fact]
+        public async Task Advance_UsesTheBotsProfile_ForTheMoveItPlays()
+        {
+            using var context = CreateContext();
+            var now = DateTime.UtcNow;
+            await SeedAsync(context);
+            await SeedProfileCardsAsync(context);
+            var (gameRepository, gamePlayService, selector, notifier) = CreateEngine(context);
+            var match = await AddMatchAsync(
+                context,
+                status: "active",
+                activatedAt: now - TimeSpan.FromMinutes(1),
+                currentPlayerTurn: TestBots.Login
+            );
+            await AddHandAsync(
+                context,
+                match.Id,
+                PlayerOne,
+                [HumanProfileCard, 1, 2, 3, 4],
+                usedCards: 1
+            );
+            await AddHandAsync(context, match.Id, TestBots.Login, [BotStrongCard, BotWeakCard]);
+            await AddPlacementAsync(
+                context,
+                match.Id,
+                BotProfileCornerCard,
+                TestBots.Login,
+                x: 0,
+                y: 0,
+                placedAt: now - TimeSpan.FromSeconds(10)
+            );
+            await AddPlacementAsync(
+                context,
+                match.Id,
+                HumanProfileCard,
+                PlayerOne,
+                x: 1,
+                y: 0,
+                placedAt: now - TimeSpan.FromSeconds(10)
+            );
+
+            await AdvanceAsync(
+                gameRepository,
+                gamePlayService,
+                selector,
+                notifier,
+                now,
+                CPUPlayingProfile.Formidable
+            );
+
+            // Formidable seals the corner card in by playing its cheap card at (0,1) — a square Decent never picks,
+            // which is what makes the profile the only explanation for this move.
+            var played = Assert.Single(notifier.Moves);
+            Assert.Equal((0, 1), (played.X, played.Y));
+            Assert.Equal(BotWeakCard, played.CardId);
+        }
+
         /// <summary>One pass of the engine with the scripted move choice these tests expect.</summary>
         private static async Task AdvanceAsync(
             GameRepository gameRepository,
             GamePlayService gamePlayService,
             BotMoveSelector selector,
             RecordingMatchNotifier notifier,
-            DateTime now
+            DateTime now,
+            CPUPlayingProfile profile = CPUPlayingProfile.Decent
         ) =>
             await BotTurnService.AdvanceAsync(
                 gameRepository,
@@ -428,15 +498,15 @@ namespace TripleTriadApi.Tests.Services
                 selector,
                 notifier,
                 new FixedRandom(0),
-                LoadedBots(),
+                LoadedBots(profile),
                 now
             );
 
-        /// <summary>A registry holding the one login these tests seed the machine as.</summary>
-        private static BotRegistry LoadedBots()
+        /// <summary>A registry holding the one login these tests seed the machine as, with the profile it plays.</summary>
+        private static BotRegistry LoadedBots(CPUPlayingProfile profile = CPUPlayingProfile.Decent)
         {
             var registry = new BotRegistry();
-            registry.Load([new BotRegistry.Bot(TestBots.Login, 100)]);
+            registry.Load([new BotRegistry.Bot(TestBots.Login, 100, profile)]);
 
             return registry;
         }
@@ -599,6 +669,33 @@ namespace TripleTriadApi.Tests.Services
         /// The two rank-1 cards the capture test puts in the corners: the seeded catalogue is rank 5 on every side, so
         /// these are the only cards on that board a bot card actually beats.
         /// </summary>
+        /// <summary>The four cards the profile test needs: a strong and a weak card for the bot's hand, and two rank-1 cards on the board.</summary>
+        private static async Task SeedProfileCardsAsync(TripleTriadContext context)
+        {
+            AddUniformCard(context, BotStrongCard, 10);
+            AddUniformCard(context, BotWeakCard, 1);
+            AddUniformCard(context, HumanProfileCard, 1);
+            AddUniformCard(context, BotProfileCornerCard, 1);
+
+            await context.SaveChangesAsync();
+        }
+
+        private static void AddUniformCard(TripleTriadContext context, int cardId, int value) =>
+            context.Cards.Add(
+                new Card
+                {
+                    Id = cardId,
+                    Name = $"Card {cardId}",
+                    Image = $"ff8-deck/card-{cardId}.jpg",
+                    TopValue = value,
+                    RightValue = value,
+                    BottomValue = value,
+                    LeftValue = value,
+                    Element = [],
+                    Level = 1,
+                }
+            );
+
         private static async Task SeedWeakCornersAsync(TripleTriadContext context)
         {
             foreach (var cardId in new[] { HumanCornerA, HumanCornerB })

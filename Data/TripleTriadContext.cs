@@ -64,6 +64,12 @@ namespace TripleTriadApi.Data
                 entity.Property(e => e.IsBot).HasDefaultValue(false);
                 entity.Property(e => e.Activity).HasDefaultValue(0);
 
+                // The bot's personality (plans/PLAN-029-cpu-playing-profiles/plan.md). Defaulted to Decent so an
+                // existing row — and any insert that forgets it — keeps playing exactly as it always has.
+                entity
+                    .Property(e => e.CpuPlayingProfile)
+                    .HasDefaultValue(CPUPlayingProfile.Decent);
+
                 // Unique constraints for authentication
                 entity.HasIndex(e => e.Login).IsUnique();
                 entity.HasIndex(e => e.Email).IsUnique();
