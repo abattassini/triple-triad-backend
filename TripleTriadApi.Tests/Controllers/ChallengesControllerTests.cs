@@ -184,6 +184,10 @@ namespace TripleTriadApi.Tests.Controllers
                 );
             }
 
+            // Both seats need a playable collection before an invitation can be sent
+            // (plans/PLAN-030-minimum-cards-and-board-menu/plan.md).
+            FriendshipTestHarness.GiveEachLoginAHand(context, logins);
+
             await context.SaveChangesAsync();
         }
 

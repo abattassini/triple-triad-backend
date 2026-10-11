@@ -21,6 +21,8 @@ namespace TripleTriadApi.Controllers
         private readonly IMatchNotifier _notifier;
         private readonly IRandomSource _random;
         private readonly MatchmakingService _matchmaking;
+        private readonly IPlayerRepository _playerRepository;
+        private readonly MatchEligibilityService _matchEligibility;
 
         public GameController(
             IGameRepository gameRepository,
@@ -30,7 +32,9 @@ namespace TripleTriadApi.Controllers
             MatchStateService matchState,
             IMatchNotifier notifier,
             IRandomSource random,
-            MatchmakingService matchmaking
+            MatchmakingService matchmaking,
+            IPlayerRepository playerRepository,
+            MatchEligibilityService matchEligibility
         )
         {
             _gameRepository = gameRepository;
@@ -41,6 +45,8 @@ namespace TripleTriadApi.Controllers
             _notifier = notifier;
             _random = random;
             _matchmaking = matchmaking;
+            _playerRepository = playerRepository;
+            _matchEligibility = matchEligibility;
         }
 
         /// <summary>
@@ -140,6 +146,16 @@ namespace TripleTriadApi.Controllers
                     return Unauthorized(new { error = "User not authenticated" });
                 }
 
+                // A player without a hand's worth of different cards cannot be in a match at all
+                // (plans/PLAN-030-minimum-cards-and-board-menu/plan.md). Checked before anything is validated further
+                // or written, so a refusal leaves the world exactly as it was.
+                if (!await _matchEligibility.CanPlayAsync(playerId))
+                {
+                    return BadRequest(
+                        new { error = MatchEligibilityService.NotEnoughCardsMessage }
+                    );
+                }
+
                 // Rules are optional; unknown names are rejected so a typo never silently creates a
                 // match with different rules than the client asked for.
                 if (!MatchRuleExtensions.TryParseAll(request.Rules, out var rules))
@@ -157,6 +173,29 @@ namespace TripleTriadApi.Controllers
                 // Determine opponent: null = a match waiting for a human (the normal Quick Match target). A named
                 // opponent is seated straight away; bots are seated by the matchmaking fallback, not here (PLAN-025).
                 string? opponent = request.OpponentId;
+
+                // A named opponent is seated straight away, so they have to be able to play too. A bot is skipped: it
+                // owns no cards and is never seated through this path — the matchmaking fallback seats it (PLAN-025).
+                if (!string.IsNullOrEmpty(opponent))
+                {
+                    var opponentPlayer = await _playerRepository.FindByLoginAsync(opponent);
+
+                    if (
+                        opponentPlayer is not null
+                        && !opponentPlayer.IsBot
+                        && !await _matchEligibility.CanPlayAsync(opponentPlayer.Login)
+                    )
+                    {
+                        return BadRequest(
+                            new
+                            {
+                                error = MatchEligibilityService.CannotPlayMessage(
+                                    opponentPlayer.Login
+                                ),
+                            }
+                        );
+                    }
+                }
 
                 // The hand the client picked, or "I will pick once there is an opponent". Only a match waiting for an
                 // opponent supports the flag — a named opponent must bring a hand, and a list plus the flag would
@@ -303,6 +342,14 @@ namespace TripleTriadApi.Controllers
                     return Unauthorized(new { error = "User not authenticated" });
                 }
 
+                // A bot must not be seated for somebody who could not pick a hand.
+                if (!await _matchEligibility.CanPlayAsync(playerId))
+                {
+                    return BadRequest(
+                        new { error = MatchEligibilityService.NotEnoughCardsMessage }
+                    );
+                }
+
                 if (!MatchRuleExtensions.TryParseAll(request?.Rules, out var rules))
                 {
                     return BadRequest(
@@ -385,6 +432,14 @@ namespace TripleTriadApi.Controllers
                 if (string.IsNullOrEmpty(playerId))
                 {
                     return Unauthorized(new { error = "User not authenticated" });
+                }
+
+                // Quick Match both creates a match and can be seated in somebody else's, so it is a way in either way.
+                if (!await _matchEligibility.CanPlayAsync(playerId))
+                {
+                    return BadRequest(
+                        new { error = MatchEligibilityService.NotEnoughCardsMessage }
+                    );
                 }
 
                 if (!MatchRuleExtensions.TryParseAll(request?.Rules, out var rules))
@@ -724,6 +779,14 @@ namespace TripleTriadApi.Controllers
                 if (string.IsNullOrEmpty(playerId))
                 {
                     return Unauthorized(new { error = "User not authenticated" });
+                }
+
+                // Joining seats the caller, so they need a hand's worth of cards like any other way in.
+                if (!await _matchEligibility.CanPlayAsync(playerId))
+                {
+                    return BadRequest(
+                        new { error = MatchEligibilityService.NotEnoughCardsMessage }
+                    );
                 }
 
                 var match = await _gameRepository.GetMatchByIdAsync(matchId);

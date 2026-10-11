@@ -82,6 +82,10 @@ builder.Services.AddScoped<MatchRewardService>();
 // (filing a hand, cancelling a match) — the hub itself only broadcasts what happens inside a connection.
 builder.Services.AddScoped<MatchStateService>();
 builder.Services.AddScoped<MatchmakingService>();
+
+// The one rule every way into a match passes through: a player needs a hand's worth of different cards to play
+// (plans/PLAN-030-minimum-cards-and-board-menu/plan.md).
+builder.Services.AddScoped<MatchEligibilityService>();
 builder.Services.AddScoped<IMatchNotifier, SignalRMatchNotifier>();
 
 // Settles matches whose deadlines passed: a waiting match nobody joined, a hand that never arrived, a stalled game.

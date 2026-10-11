@@ -31,6 +31,9 @@ namespace TripleTriadApi.Tests.Controllers
         private const string OpponentLogin = "squall";
         private const string StrangerLogin = "seifer";
 
+        /// <summary>A player who has opened nothing yet: one card, so no hand can be picked.</summary>
+        private const string PoorLogin = "poor";
+
         /// <summary>Player 1's first five cards — the sent order of a hand is the order the player picked in.</summary>
         private static readonly int[] FirstHand = [1, 2, 3, 4, 5];
 
@@ -958,6 +961,78 @@ namespace TripleTriadApi.Tests.Controllers
                     .Options
             );
 
+        [Fact]
+        public async Task EveryWayIntoAMatch_IsRefused_WhenTheCallerOwnsTooFewCards()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context);
+            await SeedTooPoorToPlayAsync(context, PoorLogin);
+            var controller = CreateController(context, PoorLogin);
+
+            var create = await controller.CreateMatch(
+                new CreateMatchRequest { PickHandLater = true }
+            );
+            var quick = await controller.QuickMatch(new QuickMatchRequest());
+            var bot = await controller.QuickBotMatch(new QuickMatchRequest());
+            var join = await controller.JoinMatch(1, new JoinMatchRequest { PickHandLater = true });
+
+            // Create, Quick Match, the bot fallback and Join all refuse with the same sentence — and none of them
+            // writes anything (plans/PLAN-030-minimum-cards-and-board-menu/plan.md).
+            foreach (var result in new[] { create.Result, quick.Result, bot.Result, join.Result })
+            {
+                Assert.Equal(
+                    MatchEligibilityService.NotEnoughCardsMessage,
+                    ErrorMessage(Assert.IsType<BadRequestObjectResult>(result))
+                );
+            }
+
+            Assert.Empty(context.Matches);
+        }
+
+        [Fact]
+        public async Task CreateMatch_Refuses_WhenANamedHumanOpponentCannotPlayYet()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context);
+            await SeedTooPoorToPlayAsync(context, PoorLogin);
+
+            var result = await CreateController(context, PlayerLogin)
+                .CreateMatch(new CreateMatchRequest { OpponentId = PoorLogin });
+
+            // The sentence names the opponent: the player who tried to start the match is the one reading it. A *bot*
+            // named here is deliberately exempt — it owns no cards and is seated by the fallback (PLAN-025), which is
+            // what the other `OpponentId = TestBots.Login` tests keep proving.
+            Assert.Equal(
+                MatchEligibilityService.CannotPlayMessage(PoorLogin),
+                ErrorMessage(Assert.IsType<BadRequestObjectResult>(result.Result))
+            );
+            Assert.Empty(context.Matches);
+        }
+
+        /// <summary>A player with one card — a real collection, but not enough to field a hand.</summary>
+        private static async Task SeedTooPoorToPlayAsync(TripleTriadContext context, string login)
+        {
+            context.Players.Add(
+                new Player
+                {
+                    Login = login,
+                    Email = $"{login}@example.com",
+                    PasswordHash = "hash",
+                }
+            );
+
+            OwnCards(context, login, FirstHand[0]);
+
+            await context.SaveChangesAsync();
+        }
+
+        /// <summary>The sentence a refusal carries, read the way the client reads it.</summary>
+        private static string? ErrorMessage(BadRequestObjectResult result)
+        {
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+            return json.RootElement.GetProperty("error").GetString();
+        }
+
         /// <summary>The controller under test, with the authenticated login (or none) in its HttpContext.</summary>
         private static GameController CreateController(
             TripleTriadContext context,
@@ -998,7 +1073,11 @@ namespace TripleTriadApi.Tests.Controllers
                     rng,
                     new RecordingPendingChallenges(),
                     NullLogger<MatchmakingService>.Instance
-                )
+                ),
+                // The eligibility rule every way into a match passes through
+                // (plans/PLAN-030-minimum-cards-and-board-menu/plan.md).
+                new PlayerRepository(context),
+                new MatchEligibilityService(new PlayerCardRepository(context))
             );
 
             var claims = login is null

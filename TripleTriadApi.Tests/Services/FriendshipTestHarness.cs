@@ -1,4 +1,5 @@
 using TripleTriadApi.Data;
+using TripleTriadApi.Models;
 using TripleTriadApi.Repositories;
 using TripleTriadApi.Services;
 
@@ -69,8 +70,63 @@ namespace TripleTriadApi.Tests.Services
                 CreateNotificationService(context, recorder),
                 recorder,
                 new GameLogicService(),
-                random ?? new SystemRandomSource()
+                random ?? new SystemRandomSource(),
+                // A challenge needs a playable collection on both seats
+                // (plans/PLAN-030-minimum-cards-and-board-menu/plan.md).
+                new MatchEligibilityService(new PlayerCardRepository(context))
             );
+        }
+
+        /// <summary>
+        /// A hand's worth of distinct cards for each login, so a test that is not about the eligibility rule can still
+        /// get both seats into a match (plans/PLAN-030-minimum-cards-and-board-menu/plan.md).
+        /// </summary>
+        public static void GiveEachLoginAHand(TripleTriadContext context, params string[] logins)
+        {
+            var cardIds = Enumerable.Range(1, MatchEligibilityService.RequiredCards).ToList();
+
+            foreach (var cardId in cardIds)
+            {
+                if (
+                    context.Cards.Local.Any(card => card.Id == cardId)
+                    || context.Cards.Any(card => card.Id == cardId)
+                )
+                {
+                    continue;
+                }
+
+                context.Cards.Add(
+                    new Card
+                    {
+                        Id = cardId,
+                        Name = $"Card {cardId}",
+                        Image = $"ff8-deck/card-{cardId}.jpg",
+                        TopValue = 1,
+                        RightValue = 1,
+                        BottomValue = 1,
+                        LeftValue = 1,
+                        Element = [],
+                        Level = 1,
+                    }
+                );
+            }
+
+            foreach (var login in logins)
+            {
+                foreach (var cardId in cardIds)
+                {
+                    context.PlayerCards.Add(
+                        new PlayerCard
+                        {
+                            PlayerId = login,
+                            CardId = cardId,
+                            Quantity = 1,
+                            FirstAcquiredAt = DateTime.UtcNow.AddDays(-1),
+                            LastAcquiredAt = DateTime.UtcNow,
+                        }
+                    );
+                }
+            }
         }
     }
 }

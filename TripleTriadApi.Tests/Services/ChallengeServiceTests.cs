@@ -18,6 +18,9 @@ namespace TripleTriadApi.Tests.Services
         private const string Stranger = "stranger";
         private const string Bystander = "bystander";
 
+        /// <summary>A friend who has opened nothing yet: one card, so no hand can be picked.</summary>
+        private const string Newcomer = "newcomer";
+
         [Fact]
         public async Task Challenge_AFriendWhoIsOnline_CreatesAPendingMatchAndAnInboxRow()
         {
@@ -372,6 +375,74 @@ namespace TripleTriadApi.Tests.Services
             );
         }
 
+        [Fact]
+        public async Task Challenge_IsRefused_WhenTheChallengerCannotPlayYet()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context, Rival);
+            await SeedWithoutAHandAsync(context, Newcomer);
+            await BefriendAsync(context, Newcomer, Rival);
+
+            var result = await Service(context, new RecordingPlayerNotifier(), Online(Rival))
+                .ChallengeAsync(Newcomer, Rival, [], Now);
+
+            // A challenge is a way into a match for the sender too, so the rule is checked before anything is written
+            // (plans/PLAN-030-minimum-cards-and-board-menu/plan.md).
+            Assert.False(result.Succeeded);
+            Assert.Equal(ChallengeService.ChallengeFailure.NotEnoughCards, result.Failure);
+            Assert.Equal(MatchEligibilityService.NotEnoughCardsMessage, result.ErrorMessage);
+            Assert.Empty(context.Matches);
+        }
+
+        [Fact]
+        public async Task Challenge_IsRefused_WhenTheFriendCannotPlayYet()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context, Me);
+            await SeedWithoutAHandAsync(context, Newcomer);
+            await BefriendAsync(context, Me, Newcomer);
+
+            var result = await Service(context, new RecordingPlayerNotifier(), Online(Newcomer))
+                .ChallengeAsync(Me, Newcomer, [], Now);
+
+            Assert.False(result.Succeeded);
+            Assert.Equal(ChallengeService.ChallengeFailure.NotEnoughCards, result.Failure);
+            // The friend is named: the challenger reads the sentence, and they are the one who can act on it.
+            Assert.Equal(MatchEligibilityService.CannotPlayMessage(Newcomer), result.ErrorMessage);
+            Assert.Empty(context.Matches);
+        }
+
+        [Fact]
+        public async Task Accept_IsRefused_WhenTheAccepterCannotPlayYet()
+        {
+            using var context = CreateContext();
+            await SeedAsync(context, Me);
+            await SeedWithoutAHandAsync(context, Newcomer);
+
+            context.Matches.Add(
+                new Match
+                {
+                    Player1Id = Me,
+                    Player2Id = Newcomer,
+                    CurrentPlayerTurn = Me,
+                    Status = "pending",
+                    CreatedAt = Now,
+                    Player1Score = 5,
+                    Player2Score = 5,
+                }
+            );
+            await context.SaveChangesAsync();
+            var matchId = (await context.Matches.SingleAsync()).Id;
+
+            var result = await Service(context).AcceptAsync(matchId, Newcomer, Now);
+
+            Assert.False(result.Succeeded);
+            Assert.Equal(ChallengeService.ChallengeFailure.NotEnoughCards, result.Failure);
+
+            // Nothing was settled, so the invitation is still there for a seat that can play.
+            Assert.Equal("pending", (await context.Matches.SingleAsync()).Status);
+        }
+
         /// <summary>A fixed instant, so the twenty-minute window is arithmetic rather than a race with the clock.</summary>
         private static readonly DateTime Now = new(2026, 10, 7, 12, 0, 0, DateTimeKind.Utc);
 
@@ -414,6 +485,40 @@ namespace TripleTriadApi.Tests.Services
                     }
                 );
             }
+
+            // Every seat needs a playable collection: an invitation is refused outright when either side owns fewer
+            // than a hand's worth of different cards (plans/PLAN-030-minimum-cards-and-board-menu/plan.md). Tests that
+            // are *about* that rule seed their own under-stocked player instead.
+            FriendshipTestHarness.GiveEachLoginAHand(context, logins);
+
+            await context.SaveChangesAsync();
+        }
+
+        /// <summary>
+        /// A player with one card — real ownership, but nowhere near a hand
+        /// (plans/PLAN-030-minimum-cards-and-board-menu/plan.md).
+        /// </summary>
+        private static async Task SeedWithoutAHandAsync(TripleTriadContext context, string login)
+        {
+            context.Players.Add(
+                new Player
+                {
+                    Login = login,
+                    Email = $"{login}@example.com",
+                    PasswordHash = "hash",
+                }
+            );
+
+            context.PlayerCards.Add(
+                new PlayerCard
+                {
+                    PlayerId = login,
+                    CardId = 999,
+                    Quantity = 1,
+                    FirstAcquiredAt = DateTime.UtcNow.AddDays(-1),
+                    LastAcquiredAt = DateTime.UtcNow,
+                }
+            );
 
             await context.SaveChangesAsync();
         }

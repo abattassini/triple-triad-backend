@@ -39,7 +39,8 @@ namespace TripleTriadApi.Services
         NotificationService notifications,
         IPlayerNotifier notifier,
         GameLogicService gameLogic,
-        IRandomSource random
+        IRandomSource random,
+        MatchEligibilityService eligibility
     ) : IPendingChallenges
     {
         private readonly IGameRepository _games = games;
@@ -50,6 +51,7 @@ namespace TripleTriadApi.Services
         private readonly IPlayerNotifier _notifier = notifier;
         private readonly GameLogicService _gameLogic = gameLogic;
         private readonly IRandomSource _random = random;
+        private readonly MatchEligibilityService _eligibility = eligibility;
 
         /// <summary>
         /// Sends <paramref name="challengedLogin"/> an invitation: only a **friend who is online**, never yourself, and
@@ -99,6 +101,26 @@ namespace TripleTriadApi.Services
                 return ChallengeResult.Fail(
                     ChallengeFailure.Offline,
                     $"{challengedPlayer.Login} is not online."
+                );
+            }
+
+            // An invitation is a way into a match for **both** seats, so both collections must hold a hand's worth of
+            // cards (plans/PLAN-030-minimum-cards-and-board-menu/plan.md). Checked before anything is expired or
+            // written, so a refused invitation leaves the challenger's own outstanding ones alone.
+            if (!await _eligibility.CanPlayAsync(challenger))
+            {
+                return ChallengeResult.Fail(
+                    ChallengeFailure.NotEnoughCards,
+                    MatchEligibilityService.NotEnoughCardsMessage
+                );
+            }
+
+            // A bot is skipped: it is a legitimate opponent that owns no collection of its own.
+            if (!challengedPlayer.IsBot && !await _eligibility.CanPlayAsync(challengedPlayer.Login))
+            {
+                return ChallengeResult.Fail(
+                    ChallengeFailure.NotEnoughCards,
+                    MatchEligibilityService.CannotPlayMessage(challengedPlayer.Login)
                 );
             }
 
@@ -159,6 +181,16 @@ namespace TripleTriadApi.Services
             if (guard is not null)
             {
                 return guard;
+            }
+
+            // The seat answering must be able to play too: the rule is enforced when the invitation is sent, and again
+            // here so a challenge that predates it cannot slip through.
+            if (!await _eligibility.CanPlayAsync(challenged))
+            {
+                return ChallengeResult.Fail(
+                    ChallengeFailure.NotEnoughCards,
+                    MatchEligibilityService.NotEnoughCardsMessage
+                );
             }
 
             // The window is enforced here as well as by the sweep, so a stale dialog cannot revive an old invitation.
@@ -366,6 +398,12 @@ namespace TripleTriadApi.Services
 
             /// <summary>The challenged player is not online.</summary>
             Offline,
+
+            /// <summary>
+            /// A seat does not own enough different cards to play — the challenger, the challenged, or the player
+            /// answering an invitation (plans/PLAN-030-minimum-cards-and-board-menu/plan.md).
+            /// </summary>
+            NotEnoughCards,
 
             /// <summary>The acting player is already in a match.</summary>
             Busy,
